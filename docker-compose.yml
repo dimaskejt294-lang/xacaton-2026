@@ -1,0 +1,16 @@
+services:
+  yasna:
+    build: .
+    container_name: yasna-workshop
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_PATH: /app/data/yasna.db
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads

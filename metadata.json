@@ -1,0 +1,6 @@
+{
+  "name": "gh Workbench",
+  "description": "GitHub repository explorer, code browser, developer lookup, and interactive gh CLI command builder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
