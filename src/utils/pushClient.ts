@@ -1,7 +1,10 @@
-function sanitizeBase64Url(rawKey: unknown): string {
-  if (typeof rawKey !== 'string') return '';
-  const trimmed = rawKey.trim();
-  if (trimmed.length < 60 || trimmed.length > 120) return '';
+const VAPID_PUBLIC_KEY_ENDPOINT = '/api/push/vapid-public-key';
+const PUSH_SUBSCRIBE_ENDPOINT = '/api/push/subscribe';
+
+function sanitizeBase64Url(rawValue: unknown, minLen = 24, maxLen = 128): string {
+  if (typeof rawValue !== 'string') return '';
+  const trimmed = rawValue.trim();
+  if (trimmed.length < minLen || trimmed.length > maxLen) return '';
   for (let i = 0; i < trimmed.length; i += 1) {
     const code = trimmed.charCodeAt(i);
     const isAlphanumeric =
@@ -15,7 +18,7 @@ function sanitizeBase64Url(rawKey: unknown): string {
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
-  const sanitized = sanitizeBase64Url(base64String);
+  const sanitized = sanitizeBase64Url(base64String, 60, 120);
   if (!sanitized) {
     throw new Error('Некорректный формат VAPID-ключа');
   }
@@ -34,16 +37,13 @@ let cachedClientVapidKey: string | null = null;
 
 export function getClientVapidPublicKey(): string {
   const envKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  const sanitized = sanitizeBase64Url(envKey);
-  if (sanitized) {
-    return sanitized;
-  }
-  return '';
+  return sanitizeBase64Url(envKey, 60, 120);
 }
 
-export async function fetchServerVapidPublicKey(
-  token?: string | null
-): Promise<{ publicKey?: string; error?: string }> {
+export async function fetchServerVapidPublicKey(): Promise<{
+  publicKey?: string;
+  error?: string;
+}> {
   if (cachedClientVapidKey) {
     return { publicKey: cachedClientVapidKey };
   }
@@ -55,39 +55,22 @@ export async function fetchServerVapidPublicKey(
     return { publicKey: envKey };
   }
 
-  // 2. Fetch from server endpoint if not set in client env
+  // 2. Fetch from static server endpoint (no user input in URL)
   try {
-    const res = await fetch('/api/push/vapid-public-key');
+    const res = await fetch(VAPID_PUBLIC_KEY_ENDPOINT, {
+      method: 'GET',
+      credentials: 'same-origin',
+    });
     if (res.ok) {
       const data = (await res.json().catch(() => ({}))) as { publicKey?: string };
-      const validKey = sanitizeBase64Url(data.publicKey);
+      const validKey = sanitizeBase64Url(data.publicKey, 60, 120);
       if (validKey) {
         cachedClientVapidKey = validKey;
         return { publicKey: validKey };
       }
     }
   } catch (err) {
-    console.warn('[PushClient] Ошибка обращения к /api/push/vapid-public-key:', err);
-  }
-
-  // 3. Fallback to family token endpoint if token provided
-  if (token) {
-    const safeToken = sanitizeBase64Url(token);
-    if (safeToken) {
-      try {
-        const tokenRes = await fetch(`/api/lk/${encodeURIComponent(safeToken)}/push/vapid-public-key`);
-        if (tokenRes.ok) {
-          const data = (await tokenRes.json().catch(() => ({}))) as { publicKey?: string };
-          const validKey = sanitizeBase64Url(data.publicKey);
-          if (validKey) {
-            cachedClientVapidKey = validKey;
-            return { publicKey: validKey };
-          }
-        }
-      } catch (err) {
-        console.warn('[PushClient] Ошибка обращения к эндпоинту ЛК:', err);
-      }
-    }
+    console.warn('[PushClient] Ошибка обращения к серверу за VAPID-ключом:', err);
   }
 
   return { error: 'Не удалось получить публичный VAPID-ключ для push-уведомлений' };
@@ -143,7 +126,7 @@ export async function subscribeFamilyPush(
       };
     }
 
-    const { publicKey, error } = await fetchServerVapidPublicKey(token);
+    const { publicKey, error } = await fetchServerVapidPublicKey();
     if (!publicKey) {
       return {
         ok: false,
@@ -168,7 +151,7 @@ export async function subscribeFamilyPush(
       };
     }
 
-    const safeToken = sanitizeBase64Url(token);
+    const safeToken = sanitizeBase64Url(token, 24, 128);
     if (!safeToken) {
       return {
         ok: false,
@@ -177,12 +160,14 @@ export async function subscribeFamilyPush(
     }
 
     const subJson = subscription.toJSON();
-    const subRes = await fetch(`/api/lk/${encodeURIComponent(safeToken)}/push/subscribe`, {
+    const subRes = await fetch(PUSH_SUBSCRIBE_ENDPOINT, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        token: safeToken,
         endpoint: subJson.endpoint,
         keys: subJson.keys,
       }),

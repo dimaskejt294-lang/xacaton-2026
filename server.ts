@@ -11,7 +11,12 @@ import { parentRouter } from './src/server/routes/parentRoutes.ts';
 import { publicRouter } from './src/server/routes/publicRoutes.ts';
 import { webhookRouter } from './src/server/routes/webhookRoutes.ts';
 import { seedInitialDataIfEmpty } from './src/server/seed.ts';
-import { getVapidPublicKey, startReminderScheduler } from './src/server/services/pushService.ts';
+import { resolveFamilyByToken } from './src/server/security.ts';
+import {
+  getVapidPublicKey,
+  savePushSubscription,
+  startReminderScheduler,
+} from './src/server/services/pushService.ts';
 
 async function bootstrap(): Promise<void> {
   getDb();
@@ -51,6 +56,23 @@ async function bootstrap(): Promise<void> {
     } catch (err) {
       console.error('[Ясна Push] Ошибка выдачи VAPID-ключа:', err);
       res.status(500).json({ error: 'Не удалось получить публичный VAPID-ключ' });
+    }
+  });
+
+  app.post('/api/push/subscribe', (req, res, next) => {
+    try {
+      const rawToken = String(req.body?.token ?? req.headers['x-family-token'] ?? '').trim();
+      const family = resolveFamilyByToken(rawToken);
+      const result = savePushSubscription(family.id, {
+        endpoint: String(req.body?.endpoint ?? ''),
+        keys: {
+          p256dh: String(req.body?.keys?.p256dh ?? ''),
+          auth: String(req.body?.keys?.auth ?? ''),
+        },
+      });
+      res.status(201).json({ ok: true, count: result.count });
+    } catch (err) {
+      next(err);
     }
   });
 
