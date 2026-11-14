@@ -22,10 +22,16 @@ async function bootstrap(): Promise<void> {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-XSS-Protection', '0');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    const forwardedProto = req.headers['x-forwarded-proto']?.toString().split(',')[0]?.trim();
+    if (req.secure || forwardedProto === 'https') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
     next();
   });
 
@@ -76,6 +82,10 @@ async function bootstrap(): Promise<void> {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.yookassa.ru; object-src 'none'; base-uri 'self'; form-action 'self'"
+      );
       res.sendFile(path.join(distDir, 'index.html'));
     });
   }

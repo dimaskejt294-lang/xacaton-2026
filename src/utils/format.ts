@@ -37,9 +37,103 @@ export function formatMoney(amount: number): string {
   }).format(amount)} ₽`;
 }
 
+export const WORKSHOP_TIMEZONE = 'Asia/Yekaterinburg';
+
+const surgutPartsFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: WORKSHOP_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+export function getSurgutDateParts(input: Date | string): {
+  year: string;
+  month: string;
+  day: string;
+  hour: string;
+  minute: string;
+  dateKey: string;
+} | null {
+  const date = typeof input === 'string' ? new Date(input) : input;
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = surgutPartsFormatter.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') {
+      map[part.type] = part.value;
+    }
+  }
+  const year = map.year ?? '1970';
+  const month = map.month ?? '01';
+  const day = map.day ?? '01';
+  const hour = map.hour ?? '00';
+  const minute = map.minute ?? '00';
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    dateKey: `${year}-${month}-${day}`,
+  };
+}
+
+export function toSurgutDateKey(input: Date | string): string {
+  return getSurgutDateParts(input)?.dateKey ?? '';
+}
+
+export function formatSurgutTime(iso: string): string {
+  const parts = getSurgutDateParts(iso);
+  if (!parts) return '—';
+  return `${parts.hour}:${parts.minute}`;
+}
+
+export function formatSurgutTimeRange(startIso: string, durationMinutes: number): string {
+  const start = new Date(startIso);
+  if (Number.isNaN(start.getTime())) return '—';
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  const startParts = getSurgutDateParts(start);
+  const endParts = getSurgutDateParts(end);
+  if (!startParts || !endParts) return '—';
+  return `${startParts.hour}:${startParts.minute}–${endParts.hour}:${endParts.minute}`;
+}
+
+export function isoToSurgutDatetimeLocal(iso: string): string {
+  const parts = getSurgutDateParts(iso);
+  if (!parts) return defaultNextWeekendDatetimeLocal();
+  return `${parts.dateKey}T${parts.hour}:${parts.minute}`;
+}
+
+export function surgutDatetimeLocalToIso(localValue: string): string {
+  const trimmed = localValue.trim();
+  const normalized = trimmed.length === 16 ? `${trimmed}:00+05:00` : `${trimmed}+05:00`;
+  const parsed = new Date(normalized);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+  return new Date(trimmed).toISOString();
+}
+
+export function defaultNextWeekendDatetimeLocal(): string {
+  const todayKey = toSurgutDateKey(new Date());
+  const [y, m, d] = todayKey.split('-').map(Number);
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const candidate = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + offset, 7, 0, 0));
+    const dow = candidate.getUTCDay();
+    if (dow === 6 || dow === 0) {
+      return `${toSurgutDateKey(candidate)}T10:00`;
+    }
+  }
+  return `${todayKey}T10:00`;
+}
+
 export function formatDateTimeRu(iso: string): string {
   const date = new Date(iso);
   return date.toLocaleString('ru-RU', {
+    timeZone: WORKSHOP_TIMEZONE,
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -50,6 +144,7 @@ export function formatDateTimeRu(iso: string): string {
 export function formatDateRu(iso: string): string {
   const date = new Date(iso);
   return date.toLocaleDateString('ru-RU', {
+    timeZone: WORKSHOP_TIMEZONE,
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',

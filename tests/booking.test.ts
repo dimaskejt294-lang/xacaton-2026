@@ -48,17 +48,21 @@ describe('Booking, capacity limits, attendance & configurable rules', () => {
       .get(fam2.id) as { id: number };
     child3Id = fam2Child.id;
 
-    const lesson = db
-      .prepare('SELECT id FROM lessons WHERE capacity = 2 LIMIT 1')
-      .get() as { id: number };
-    lessonCap2Id = lesson.id;
+    const in2Days = new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString();
+    const resCap2 = db
+      .prepare(
+        `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price, description)
+         VALUES ('Тест вместимости 2 места', 'group', ?, 120, 2, 1200, 'Проверка лимита мест')`
+      )
+      .run(in2Days);
+    lessonCap2Id = Number(resCap2.lastInsertRowid);
 
     // Create a lesson starting in 3 hours (inside 24h late-cancel window)
     const in3Hours = new Date(Date.now() + 3 * 3600 * 1000).toISOString();
     const resSoon = db
       .prepare(
         `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price, description)
-         VALUES ('Срочное занятие', 'group', ?, 90, 4, 1200, 'Тест поздней отмены')`
+         VALUES ('Срочное занятие', 'group', ?, 120, 4, 1200, 'Тест поздней отмены')`
       )
       .run(in3Hours);
     lessonSoonId = Number(resSoon.lastInsertRowid);
@@ -187,5 +191,43 @@ describe('Booking, capacity limits, attendance & configurable rules', () => {
       reason: 'Отметка через календарь',
     });
     expect(getActiveLessonsRemaining(db, family1Id)).toBe(before - 1);
+  });
+
+  it('seeds real weekend group schedule (Sat/Sun 10:00, 13:00, 16:00 Surgut) with 120 min duration', () => {
+    const db = getDb();
+    const settings = db
+      .prepare('SELECT hero_duration_text FROM workshop_settings WHERE id = 1')
+      .get() as { hero_duration_text: string };
+    expect(settings.hero_duration_text).toBe('2 часа');
+
+    const seededGroups = db
+      .prepare(
+        `SELECT start_time, duration_minutes, lesson_type
+         FROM lessons
+         WHERE title != 'Тест вместимости 2 места'
+           AND title != 'Срочное занятие'
+           AND title != 'Сегодняшняя группа'`
+      )
+      .all() as Array<{ start_time: string; duration_minutes: number; lesson_type: string }>;
+
+    expect(seededGroups.length).toBeGreaterThanOrEqual(6);
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Yekaterinburg',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    });
+
+    for (const row of seededGroups) {
+      expect(row.lesson_type).toBe('group');
+      expect(row.duration_minutes).toBe(120);
+      const parts = Object.fromEntries(
+        fmt.formatToParts(new Date(row.start_time)).map((p) => [p.type, p.value])
+      );
+      expect(['Sat', 'Sun']).toContain(parts.weekday);
+      expect(['10', '13', '16']).toContain(parts.hour);
+      expect(parts.minute).toBe('00');
+    }
   });
 });

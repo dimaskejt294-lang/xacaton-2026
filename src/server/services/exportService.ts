@@ -212,13 +212,13 @@ export function importClientsFromCsv(csvText: string): { importedFamilies: numbe
         continue;
       }
 
-      const parentName = cols[0];
-      const phone = cols[1] || '+7 (922) 000-00-00';
-      const childName = cols[2];
+      const parentName = (cols[0] ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 120);
+      const phone = (cols[1] ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 30);
+      const childName = (cols[2] ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 80);
       const childAgeRaw = Number(cols[3] || 9);
       const lessonsRaw = Number(cols[4] || 0);
 
-      if (!parentName || !childName) {
+      if (!parentName || phone.length < 5 || !childName) {
         continue;
       }
 

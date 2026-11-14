@@ -124,6 +124,16 @@ publicRouter.get('/legal', (_req, res, next) => {
   }
 });
 
+const LEGAL_MIME_BY_EXT: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.txt': 'text/plain; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+};
+
 publicRouter.get('/legal/:docKey/file', (req, res, next) => {
   try {
     const docKey = parseLegalDocKey(req.params.docKey);
@@ -131,6 +141,7 @@ publicRouter.get('/legal/:docKey/file', (req, res, next) => {
     const inline = req.query.inline === '1';
 
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', 'sandbox');
     res.setHeader('Cache-Control', 'private, max-age=300');
 
     if (doc.file_path) {
@@ -143,11 +154,12 @@ publicRouter.get('/legal/:docKey/file', (req, res, next) => {
 
       const ext = path.extname(safeName).toLowerCase();
       const canInline = ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp' || ext === '.txt';
-      const downloadName = doc.original_name || `${doc.doc_key}${ext || '.pdf'}`;
+      const downloadName = (doc.original_name || `${doc.doc_key}${ext || '.pdf'}`)
+        .replace(/[\r\n\u0000-\u001F\u007F]/g, '_')
+        .slice(0, 200);
 
-      if (doc.mime_type) {
-        res.setHeader('Content-Type', doc.mime_type);
-      }
+      const resolvedMime = LEGAL_MIME_BY_EXT[ext] ?? 'application/octet-stream';
+      res.setHeader('Content-Type', resolvedMime);
 
       if (inline && canInline) {
         res.setHeader(

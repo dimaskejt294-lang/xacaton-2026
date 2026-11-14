@@ -98,17 +98,22 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
         >
           <div className="w-full max-w-md rounded-2xl border border-[#E5E7EB] bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-display text-lg font-bold text-[#111827]">
-                  {modalMode === 'push-prompt'
-                    ? 'Включить уведомления на устройство?'
-                    : 'Закрепить «Ясну» на рабочем столе'}
-                </h3>
-                <p className="mt-1 text-xs text-[#6B7280]">
-                  {modalMode === 'push-prompt'
-                    ? 'Чтобы сразу получать чеки об оплате, подтверждения записи, отметки посещения и напоминания за 24 часа до занятия.'
-                    : 'Кабинет родителя будет открываться как отдельное приложение в один тап.'}
-                </p>
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#FDF4ED] text-[#C86D2D]">
+                  <Smartphone className="h-5 w-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="font-display text-lg font-bold text-[#111827]">
+                    {modalMode === 'push-prompt'
+                      ? 'Включить уведомления на устройство?'
+                      : 'Закрепить «Ясну» на рабочем столе'}
+                  </h3>
+                  <p className="mt-1 text-xs text-[#6B7280]">
+                    {modalMode === 'push-prompt'
+                      ? 'Чтобы сразу получать чеки об оплате, подтверждения записи, отметки посещения и напоминания за 24 часа до занятия.'
+                      : 'Кабинет родителя будет открываться как отдельное приложение в один тап.'}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"

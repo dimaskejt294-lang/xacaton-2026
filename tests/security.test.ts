@@ -1,5 +1,7 @@
-import type { Request } from 'express';
+import cookieParser from 'cookie-parser';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -8,10 +10,14 @@ import type { HttpError as HttpErrorType } from '../src/server/db.ts';
 const tempDbPath = path.join(os.tmpdir(), `yasna-test-security-${Date.now()}.db`);
 process.env.DATABASE_PATH = tempDbPath;
 
+const { config } = await import('../src/server/config.ts');
 const { getDb, HttpError } = await import('../src/server/db.ts');
 const { seedInitialDataIfEmpty } = await import('../src/server/seed.ts');
+const { masterRouter } = await import('../src/server/routes/masterRoutes.ts');
+const { webhookRouter } = await import('../src/server/routes/webhookRoutes.ts');
 const {
   assertChildBelongsToFamily,
+  createRateLimiter,
   generateAccessToken,
   getSafeRequestOrigin,
   hashPassword,
@@ -20,7 +26,13 @@ const {
   verifyMasterSessionToken,
   verifyPassword,
 } = await import('../src/server/security.ts');
-const { exportClientsCsv } = await import('../src/server/services/exportService.ts');
+const { exportClientsCsv, importClientsFromCsv } = await import(
+  '../src/server/services/exportService.ts'
+);
+const { createManualPayment, attachReceiptFile } = await import(
+  '../src/server/services/paymentService.ts'
+);
+const { validatePushEndpoint } = await import('../src/server/services/pushService.ts');
 
 describe('Security: Anti-IDOR, token validation & revocation', () => {
   beforeAll(() => {
@@ -129,5 +141,120 @@ describe('Security: Anti-IDOR, token validation & revocation', () => {
       get: () => 'yasna-surgut.ru',
     } as unknown as Request;
     expect(getSafeRequestOrigin(goodReq)).toBe('https://yasna-surgut.ru');
+  });
+
+  it('blocks SSRF internal/loopback/metadata URLs and credentials in push endpoints', () => {
+    for (const badUrl of [
+      'http://localhost:8080/push',
+      'http://127.0.0.1/push',
+      'https://127.0.0.1/push',
+      'https://169.254.169.254/latest/meta-data',
+      'https://10.0.0.1/internal',
+      'https://192.168.1.10/push',
+      'https://[::1]/push',
+      'https://metadata.internal/push',
+      'https://user:pass@fcm.googleapis.com/push',
+    ]) {
+      expect(() => validatePushEndpoint(badUrl)).toThrow(HttpError);
+    }
+
+    expect(validatePushEndpoint('https://fcm.googleapis.com/fcm/send/abc123')).toBe(
+      'https://fcm.googleapis.com/fcm/send/abc123'
+    );
+  });
+
+  it('rejects URL query tokens for master and receipt endpoints and enforces rate limits', async () => {
+    const db = getDb();
+    const fam = db
+      .prepare("SELECT id, access_token FROM families WHERE parent_name = 'Елена Смирнова'")
+      .get() as { id: number; access_token: string };
+
+    const { paymentId } = createManualPayment({
+      familyId: fam.id,
+      amount: 1200,
+      lessonsCount: 1,
+      paymentMethod: 'cash',
+    });
+
+    if (!fs.existsSync(config.uploadsDir)) {
+      fs.mkdirSync(config.uploadsDir, { recursive: true });
+    }
+    const storedName = `sec-test-${Date.now()}.pdf`;
+    const receiptPath = path.join(config.uploadsDir, storedName);
+    fs.writeFileSync(receiptPath, '%PDF-1.4\n%%EOF\n');
+    attachReceiptFile(paymentId, storedName, 'Чек_тест.pdf');
+
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    const testLimiter = createRateLimiter({
+      windowMs: 60_000,
+      maxRequests: 2,
+      message: 'Rate limit exceeded',
+    });
+    app.get('/api/limited', testLimiter, (_req, res) => res.json({ ok: true }));
+    app.use('/api/master', masterRouter);
+    app.use('/api', webhookRouter);
+    app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+      if (err instanceof HttpError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: 'Internal test error' });
+    });
+
+    let server!: http.Server;
+    let baseUrl = '';
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        if (addr && typeof addr === 'object') {
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+        }
+        resolve();
+      });
+    });
+
+    try {
+      const masterToken = signMasterSession();
+      // Reject master ?session= query param
+      const queryMasterRes = await fetch(
+        `${baseUrl}/api/master/dashboard?session=${encodeURIComponent(masterToken)}`
+      );
+      expect(queryMasterRes.status).toBe(401);
+
+      // Accept master Bearer header
+      const headerMasterRes = await fetch(`${baseUrl}/api/master/dashboard`, {
+        headers: { Authorization: `Bearer ${masterToken}` },
+      });
+      expect(headerMasterRes.status).toBe(200);
+
+      // Reject family ?token= query param on receipt download
+      const queryReceiptRes = await fetch(
+        `${baseUrl}/api/files/receipts/${paymentId}?token=${encodeURIComponent(fam.access_token)}`
+      );
+      expect(queryReceiptRes.status).toBe(404);
+
+      // Accept X-Family-Token header and include CSP sandbox
+      const headerReceiptRes = await fetch(`${baseUrl}/api/files/receipts/${paymentId}?inline=1`, {
+        headers: { 'X-Family-Token': fam.access_token },
+      });
+      expect(headerReceiptRes.status).toBe(200);
+      expect(headerReceiptRes.headers.get('content-security-policy')).toBe('sandbox');
+
+      // Enforce 429 rate limiting
+      expect((await fetch(`${baseUrl}/api/limited`)).status).toBe(200);
+      expect((await fetch(`${baseUrl}/api/limited`)).status).toBe(200);
+      expect((await fetch(`${baseUrl}/api/limited`)).status).toBe(429);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (fs.existsSync(receiptPath)) {
+        fs.unlinkSync(receiptPath);
+      }
+    }
+  });
+
+  it('rejects CSV import rows missing a phone number instead of inventing placeholder phones', () => {
+    expect(() => importClientsFromCsv('Иван Петров;;Петя;8;2')).toThrow(HttpError);
   });
 });

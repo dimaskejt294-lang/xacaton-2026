@@ -80,7 +80,7 @@ function initializeSchema(db: DatabaseSync): void {
       title TEXT NOT NULL,
       lesson_type TEXT NOT NULL CHECK(lesson_type IN ('group', 'masterclass', 'individual', 'birthday')),
       start_time TEXT NOT NULL,
-      duration_minutes INTEGER NOT NULL DEFAULT 90 CHECK(duration_minutes >= 15),
+      duration_minutes INTEGER NOT NULL DEFAULT 120 CHECK(duration_minutes >= 15),
       capacity INTEGER NOT NULL CHECK(capacity >= 1),
       single_price REAL NOT NULL CHECK(single_price >= 0),
       description TEXT,
@@ -172,7 +172,7 @@ function initializeSchema(db: DatabaseSync): void {
       show_hero_age INTEGER NOT NULL DEFAULT 1,
       hero_age_text TEXT NOT NULL DEFAULT '6–14 лет',
       show_hero_duration INTEGER NOT NULL DEFAULT 1,
-      hero_duration_text TEXT NOT NULL DEFAULT '90 минут',
+      hero_duration_text TEXT NOT NULL DEFAULT '2 часа',
       show_hero_groups INTEGER NOT NULL DEFAULT 1,
       hero_groups_text TEXT NOT NULL DEFAULT '2–4 места',
       show_hero_free_cancel INTEGER NOT NULL DEFAULT 1
@@ -240,7 +240,7 @@ function initializeSchema(db: DatabaseSync): void {
   ensureSettingsCol('show_hero_age', 'INTEGER NOT NULL DEFAULT 1');
   ensureSettingsCol('hero_age_text', "TEXT NOT NULL DEFAULT '6–14 лет'");
   ensureSettingsCol('show_hero_duration', 'INTEGER NOT NULL DEFAULT 1');
-  ensureSettingsCol('hero_duration_text', "TEXT NOT NULL DEFAULT '90 минут'");
+  ensureSettingsCol('hero_duration_text', "TEXT NOT NULL DEFAULT '2 часа'");
   ensureSettingsCol('show_hero_groups', 'INTEGER NOT NULL DEFAULT 1');
   ensureSettingsCol('hero_groups_text', "TEXT NOT NULL DEFAULT '2–4 места'");
   ensureSettingsCol('show_hero_free_cancel', 'INTEGER NOT NULL DEFAULT 1');
@@ -257,7 +257,7 @@ function initializeSchema(db: DatabaseSync): void {
         title TEXT NOT NULL,
         lesson_type TEXT NOT NULL CHECK(lesson_type IN ('group', 'masterclass', 'individual', 'birthday')),
         start_time TEXT NOT NULL,
-        duration_minutes INTEGER NOT NULL DEFAULT 90 CHECK(duration_minutes >= 15),
+        duration_minutes INTEGER NOT NULL DEFAULT 120 CHECK(duration_minutes >= 15),
         capacity INTEGER NOT NULL CHECK(capacity >= 1),
         single_price REAL NOT NULL CHECK(single_price >= 0),
         description TEXT,

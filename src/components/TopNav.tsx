@@ -1,7 +1,8 @@
-import { Hammer, Menu, Moon, Sun, X } from 'lucide-react';
+import { Menu, Moon, Sun, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useState } from 'react';
 import type { ThemeMode } from '../utils/theme.ts';
+import { BrandLogo } from './BrandLogo.tsx';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 export type ActiveView = 'schedule' | 'parent' | 'master';
@@ -30,19 +31,22 @@ export const TopNav: React.FC<TopNavProps> = ({
 
   return (
     <header className="sticky top-0 z-30 border-b border-[#E5E7EB] bg-white/95 backdrop-blur-sm">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-3 sm:px-6">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-2.5 sm:px-6">
         {/* Zone 1: Brand Wordmark */}
         <button
           type="button"
           onClick={() => handleLink('/schedule')}
           className="flex shrink-0 cursor-pointer items-center gap-2.5 whitespace-nowrap text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C86D2D]"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#C86D2D] text-white shadow-sm">
-            <Hammer className="h-4 w-4" strokeWidth={1.5} />
-          </span>
-          <span className="font-display text-lg font-bold tracking-tight text-[#111827]">
-            Ясна
-          </span>
+          <BrandLogo variant="theme" className="h-10 w-10 rounded-full" />
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-base font-bold tracking-tight text-[#111827]">
+              Ясна
+            </span>
+            <span className="text-[11px] font-medium text-[#6B7280]">
+              школа труда · Сургут
+            </span>
+          </div>
         </button>
 
         {/* Zone 2: Navigation Links */}

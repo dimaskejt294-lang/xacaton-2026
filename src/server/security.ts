@@ -81,8 +81,22 @@ export function isMasterAuthenticated(req: Request): boolean {
       return true;
     }
   }
-  const queryToken = typeof req.query.session === 'string' ? req.query.session : undefined;
-  return verifyMasterSessionToken(queryToken);
+  return false;
+}
+
+export function sanitizePlainText(raw: unknown, maxLength: number): string {
+  return String(raw ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+export function parsePositiveIntId(raw: unknown, errorMessage: string): number {
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new HttpError(400, errorMessage);
+  }
+  return parsed;
 }
 
 export function requireMasterAuth(req: Request, _res: Response, next: NextFunction): void {
@@ -103,8 +117,8 @@ export interface FamilyRow {
 }
 
 export function resolveFamilyByToken(token: string): FamilyRow {
-  // Reject sequential numeric IDs and short invalid strings explicitly (anti-IDOR)
-  if (!token || /^\d+$/.test(token) || token.length < 16) {
+  // Reject sequential numeric IDs and invalid formats explicitly (anti-IDOR)
+  if (!token || !/^[A-Za-z0-9_-]{32,128}$/.test(token) || /^\d+$/.test(token)) {
     throw new HttpError(404, 'Кабинет по указанной ссылке не найден или ссылка была отозвана');
   }
 

@@ -4,6 +4,7 @@ import { MasterPanelPage } from './components/MasterPanelPage.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { ParentCabinetPage } from './components/ParentCabinetPage.tsx';
 import { PublicSchedulePage } from './components/PublicSchedulePage.tsx';
+import { SiteFooter } from './components/SiteFooter.tsx';
 import { TopNav, type ActiveView } from './components/TopNav.tsx';
 import { applyTheme, getInitialTheme, type ThemeMode } from './utils/theme.ts';
 
@@ -91,7 +92,7 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen bg-[#F5F6F8] text-[#111827] transition-colors duration-200">
+      <div className="flex min-h-screen flex-col bg-[#F5F6F8] text-[#111827] transition-colors duration-200">
         <TopNav
           activeView={route.view}
           onNavigate={navigate}
@@ -100,7 +101,7 @@ export default function App() {
           onToggleTheme={handleToggleTheme}
         />
 
-        <main>
+        <main className="flex-1">
           {route.view === 'schedule' && (
             <PublicSchedulePage
               onNavigate={navigate}
@@ -119,6 +120,7 @@ export default function App() {
           {route.view === 'master' && <MasterPanelPage onNavigate={navigate} />}
         </main>
 
+        <SiteFooter onNavigate={navigate} />
         <OfflineIndicator />
       </div>
     </MotionConfig>

@@ -11,7 +11,9 @@ import {
   hashPassword,
   isMasterAuthenticated,
   MASTER_SESSION_COOKIE,
+  parsePositiveIntId,
   requireMasterAuth,
+  sanitizePlainText,
   signMasterSession,
   verifyPassword,
 } from '../security.ts';
@@ -481,13 +483,13 @@ function normalizeLessonType(raw: unknown): 'group' | 'masterclass' | 'individua
 
 masterRouter.post('/lessons', (req, res, next) => {
   try {
-    const title = String(req.body?.title ?? '').trim();
+    const title = sanitizePlainText(req.body?.title, 140);
     const lessonType = normalizeLessonType(req.body?.lesson_type);
     const startTimeRaw = String(req.body?.start_time ?? '').trim();
-    const durationMinutes = Number(req.body?.duration_minutes ?? 90);
+    const durationMinutes = Number(req.body?.duration_minutes ?? 120);
     const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : 4));
     const singlePrice = Number(req.body?.single_price ?? 1200);
-    const description = String(req.body?.description ?? '').trim() || null;
+    const description = sanitizePlainText(req.body?.description, 1000) || null;
 
     if (!title || !startTimeRaw) {
       throw new HttpError(400, 'Укажите название и дату начала занятия');
@@ -496,11 +498,14 @@ masterRouter.post('/lessons', (req, res, next) => {
     if (Number.isNaN(parsedDate.getTime())) {
       throw new HttpError(400, 'Некорректная дата и время занятия');
     }
-    if (!Number.isInteger(capacity) || capacity < 1) {
-      throw new HttpError(400, 'Вместимость группы должна быть не менее 1 места');
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 720) {
+      throw new HttpError(400, 'Длительность занятия должна быть от 15 до 720 минут');
     }
-    if (!Number.isFinite(singlePrice) || singlePrice < 0) {
-      throw new HttpError(400, 'Цена занятия не может быть отрицательной');
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 100) {
+      throw new HttpError(400, 'Вместимость группы должна быть от 1 до 100 мест');
+    }
+    if (!Number.isFinite(singlePrice) || singlePrice < 0 || singlePrice > 1_000_000) {
+      throw new HttpError(400, 'Цена занятия должна быть от 0 до 1 000 000 ₽');
     }
 
     const db = getDb();
@@ -513,7 +518,7 @@ masterRouter.post('/lessons', (req, res, next) => {
         title,
         lessonType,
         parsedDate.toISOString(),
-        Number.isInteger(durationMinutes) && durationMinutes >= 15 ? durationMinutes : 90,
+        durationMinutes,
         capacity,
         singlePrice,
         description
@@ -527,18 +532,15 @@ masterRouter.post('/lessons', (req, res, next) => {
 
 masterRouter.patch('/lessons/:lessonId', (req, res, next) => {
   try {
-    const lessonId = Number(req.params.lessonId);
-    if (!Number.isInteger(lessonId)) {
-      throw new HttpError(400, 'Некорректный ID занятия');
-    }
+    const lessonId = parsePositiveIntId(req.params.lessonId, 'Некорректный ID занятия');
 
-    const title = String(req.body?.title ?? '').trim();
+    const title = sanitizePlainText(req.body?.title, 140);
     const lessonType = normalizeLessonType(req.body?.lesson_type);
     const startTimeRaw = String(req.body?.start_time ?? '').trim();
-    const durationMinutes = Number(req.body?.duration_minutes ?? 90);
+    const durationMinutes = Number(req.body?.duration_minutes ?? 120);
     const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : 4));
     const singlePrice = Number(req.body?.single_price ?? 1200);
-    const description = String(req.body?.description ?? '').trim() || null;
+    const description = sanitizePlainText(req.body?.description, 1000) || null;
 
     if (!title || !startTimeRaw) {
       throw new HttpError(400, 'Укажите название и дату начала занятия');
@@ -547,11 +549,14 @@ masterRouter.patch('/lessons/:lessonId', (req, res, next) => {
     if (Number.isNaN(parsedDate.getTime())) {
       throw new HttpError(400, 'Некорректная дата и время занятия');
     }
-    if (!Number.isInteger(capacity) || capacity < 1) {
-      throw new HttpError(400, 'Вместимость группы должна быть не менее 1 места');
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 720) {
+      throw new HttpError(400, 'Длительность занятия должна быть от 15 до 720 минут');
     }
-    if (!Number.isFinite(singlePrice) || singlePrice < 0) {
-      throw new HttpError(400, 'Цена занятия не может быть отрицательной');
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 100) {
+      throw new HttpError(400, 'Вместимость группы должна быть от 1 до 100 мест');
+    }
+    if (!Number.isFinite(singlePrice) || singlePrice < 0 || singlePrice > 1_000_000) {
+      throw new HttpError(400, 'Цена занятия должна быть от 0 до 1 000 000 ₽');
     }
 
     const db = getDb();
@@ -579,7 +584,7 @@ masterRouter.patch('/lessons/:lessonId', (req, res, next) => {
         title,
         lessonType,
         parsedDate.toISOString(),
-        Number.isInteger(durationMinutes) && durationMinutes >= 15 ? durationMinutes : 90,
+        durationMinutes,
         capacity,
         singlePrice,
         description,
@@ -598,10 +603,7 @@ masterRouter.patch('/lessons/:lessonId', (req, res, next) => {
 
 masterRouter.patch('/lessons/:lessonId/cancel', (req, res, next) => {
   try {
-    const lessonId = Number(req.params.lessonId);
-    if (!Number.isInteger(lessonId)) {
-      throw new HttpError(400, 'Некорректный ID занятия');
-    }
+    const lessonId = parsePositiveIntId(req.params.lessonId, 'Некорректный ID занятия');
 
     runInTransaction((db) => {
       const lesson = db
@@ -647,12 +649,9 @@ masterRouter.patch('/lessons/:lessonId/cancel', (req, res, next) => {
 
 masterRouter.post('/bookings', (req, res, next) => {
   try {
-    const lessonId = Number(req.body?.lesson_id);
-    const childId = Number(req.body?.child_id);
+    const lessonId = parsePositiveIntId(req.body?.lesson_id, 'Укажите корректное занятие');
+    const childId = parsePositiveIntId(req.body?.child_id, 'Укажите корректного ребёнка');
     const isMakeup = Boolean(req.body?.is_makeup);
-    if (!Number.isInteger(lessonId) || !Number.isInteger(childId)) {
-      throw new HttpError(400, 'Укажите занятие и ребёнка');
-    }
     const result = createBooking({ lessonId, childId, isMakeup });
     res.status(201).json({ ok: true, booking_id: result.bookingId });
   } catch (err) {
@@ -662,13 +661,10 @@ masterRouter.post('/bookings', (req, res, next) => {
 
 masterRouter.patch('/bookings/:bookingId/status', (req, res, next) => {
   try {
-    const bookingId = Number(req.params.bookingId);
+    const bookingId = parsePositiveIntId(req.params.bookingId, 'Некорректный ID записи');
     const newStatus = String(req.body?.status ?? '') as BookingStatus;
-    const reason = req.body?.reason ? String(req.body.reason) : undefined;
+    const reason = req.body?.reason ? sanitizePlainText(req.body.reason, 300) : undefined;
 
-    if (!Number.isInteger(bookingId)) {
-      throw new HttpError(400, 'Некорректный ID записи');
-    }
     if (!['booked', 'attended', 'missed', 'canceled'].includes(newStatus)) {
       throw new HttpError(400, 'Недопустимый статус посещения');
     }
@@ -682,10 +678,7 @@ masterRouter.patch('/bookings/:bookingId/status', (req, res, next) => {
 
 masterRouter.post('/waitlist/:waitlistId/convert', (req, res, next) => {
   try {
-    const waitlistId = Number(req.params.waitlistId);
-    if (!Number.isInteger(waitlistId)) {
-      throw new HttpError(400, 'Некорректный ID листа ожидания');
-    }
+    const waitlistId = parsePositiveIntId(req.params.waitlistId, 'Некорректный ID листа ожидания');
 
     const db = getDb();
     const row = db
@@ -705,14 +698,14 @@ masterRouter.post('/waitlist/:waitlistId/convert', (req, res, next) => {
 
 masterRouter.post('/families', (req, res, next) => {
   try {
-    const parentName = String(req.body?.parent_name ?? '').trim();
-    const phone = String(req.body?.phone ?? '').trim();
-    const childName = String(req.body?.child_name ?? '').trim();
+    const parentName = sanitizePlainText(req.body?.parent_name, 120);
+    const phone = sanitizePlainText(req.body?.phone, 30);
+    const childName = sanitizePlainText(req.body?.child_name, 80);
     const childAge = Number(req.body?.child_age ?? 8);
-    const childNotes = String(req.body?.child_notes ?? '').trim() || null;
+    const childNotes = sanitizePlainText(req.body?.child_notes, 300) || null;
 
-    if (!parentName || !phone || !childName) {
-      throw new HttpError(400, 'Укажите ФИО родителя, телефон и имя ребёнка');
+    if (!parentName || phone.length < 5 || !childName) {
+      throw new HttpError(400, 'Укажите ФИО родителя, корректный телефон и имя ребёнка');
     }
     if (!Number.isInteger(childAge) || childAge < 3 || childAge > 18) {
       throw new HttpError(400, 'Возраст ребёнка должен быть от 3 до 18 лет');
@@ -753,13 +746,13 @@ masterRouter.post('/families', (req, res, next) => {
 
 masterRouter.post('/families/:familyId/children', (req, res, next) => {
   try {
-    const familyId = Number(req.params.familyId);
-    const name = String(req.body?.name ?? '').trim();
+    const familyId = parsePositiveIntId(req.params.familyId, 'Некорректный ID семьи');
+    const name = sanitizePlainText(req.body?.name, 80);
     const age = Number(req.body?.age ?? 8);
-    const notes = String(req.body?.notes ?? '').trim() || null;
+    const notes = sanitizePlainText(req.body?.notes, 300) || null;
 
-    if (!Number.isInteger(familyId) || !name) {
-      throw new HttpError(400, 'Укажите корректные данные ребёнка');
+    if (!name) {
+      throw new HttpError(400, 'Укажите имя ребёнка');
     }
     if (!Number.isInteger(age) || age < 3 || age > 18) {
       throw new HttpError(400, 'Возраст должен быть от 3 до 18 лет');
@@ -782,10 +775,7 @@ masterRouter.post('/families/:familyId/children', (req, res, next) => {
 
 masterRouter.post('/families/:familyId/regenerate-token', (req, res, next) => {
   try {
-    const familyId = Number(req.params.familyId);
-    if (!Number.isInteger(familyId)) {
-      throw new HttpError(400, 'Некорректный ID семьи');
-    }
+    const familyId = parsePositiveIntId(req.params.familyId, 'Некорректный ID семьи');
 
     const db = getDb();
     const newToken = generateAccessToken();
@@ -802,10 +792,7 @@ masterRouter.post('/families/:familyId/regenerate-token', (req, res, next) => {
 
 masterRouter.post('/families/:familyId/remind', (req, res, next) => {
   try {
-    const familyId = Number(req.params.familyId);
-    if (!Number.isInteger(familyId)) {
-      throw new HttpError(400, 'Некорректный ID семьи');
-    }
+    const familyId = parsePositiveIntId(req.params.familyId, 'Некорректный ID семьи');
 
     const db = getDb();
     const fam = db.prepare('SELECT id FROM families WHERE id = ?').get(familyId);
@@ -814,7 +801,7 @@ masterRouter.post('/families/:familyId/remind', (req, res, next) => {
     }
 
     const message =
-      String(req.body?.message ?? '').trim() ||
+      sanitizePlainText(req.body?.message, 1000) ||
       'Напоминаем о продлении абонемента или погашении остатка в мастерской «Ясна». Оплатить можно в разделе «Оплаты и чеки».';
 
     createNotification(familyId, 'Напоминание от мастера', message);
@@ -826,13 +813,12 @@ masterRouter.post('/families/:familyId/remind', (req, res, next) => {
 
 masterRouter.post('/families/:familyId/subscriptions', (req, res, next) => {
   try {
-    const familyId = Number(req.params.familyId);
-    if (!Number.isInteger(familyId)) {
-      throw new HttpError(400, 'Некорректный ID семьи');
-    }
+    const familyId = parsePositiveIntId(req.params.familyId, 'Некорректный ID семьи');
 
-    const tariffId = req.body?.tariff_id ? Number(req.body.tariff_id) : null;
-    const customTitle = String(req.body?.title ?? '').trim();
+    const tariffId = req.body?.tariff_id
+      ? parsePositiveIntId(req.body.tariff_id, 'Некорректный ID тарифа')
+      : null;
+    const customTitle = sanitizePlainText(req.body?.title, 120);
     const customLessons = Number(req.body?.lessons_count ?? 0);
     const customDays = Number(req.body?.validity_days ?? 45);
 
@@ -865,11 +851,11 @@ masterRouter.post('/families/:familyId/subscriptions', (req, res, next) => {
       if (!title) {
         title = `Абонемент на ${lessonsCount} зан.`;
       }
-      if (!Number.isInteger(lessonsCount) || lessonsCount < 1) {
-        throw new HttpError(400, 'Количество занятий должно быть не менее 1');
+      if (!Number.isInteger(lessonsCount) || lessonsCount < 1 || lessonsCount > 1000) {
+        throw new HttpError(400, 'Количество занятий должно быть от 1 до 1000');
       }
-      if (!Number.isInteger(validityDays) || validityDays < 1) {
-        throw new HttpError(400, 'Срок действия должен быть не менее 1 дня');
+      if (!Number.isInteger(validityDays) || validityDays < 1 || validityDays > 3650) {
+        throw new HttpError(400, 'Срок действия должен быть от 1 до 3650 дней');
       }
 
       const now = new Date();
@@ -907,7 +893,7 @@ masterRouter.post('/families/:familyId/subscriptions', (req, res, next) => {
 
 masterRouter.post('/tariffs', (req, res, next) => {
   try {
-    const title = String(req.body?.title ?? '').trim();
+    const title = sanitizePlainText(req.body?.title, 120);
     const lessonsCount = Number(req.body?.lessons_count);
     const price = Number(req.body?.price);
     const validityDays = Number(req.body?.validity_days ?? 45);
@@ -915,14 +901,14 @@ masterRouter.post('/tariffs', (req, res, next) => {
     if (!title) {
       throw new HttpError(400, 'Укажите название тарифа абонемента');
     }
-    if (!Number.isInteger(lessonsCount) || lessonsCount < 1) {
-      throw new HttpError(400, 'Количество занятий должно быть целым числом от 1');
+    if (!Number.isInteger(lessonsCount) || lessonsCount < 1 || lessonsCount > 1000) {
+      throw new HttpError(400, 'Количество занятий должно быть от 1 до 1000');
     }
-    if (!Number.isFinite(price) || price <= 0) {
-      throw new HttpError(400, 'Стоимость должна быть больше 0 ₽');
+    if (!Number.isFinite(price) || price <= 0 || price > 1_000_000) {
+      throw new HttpError(400, 'Стоимость должна быть больше 0 и не выше 1 000 000 ₽');
     }
-    if (!Number.isInteger(validityDays) || validityDays < 1) {
-      throw new HttpError(400, 'Срок действия должен быть не менее 1 дня');
+    if (!Number.isInteger(validityDays) || validityDays < 1 || validityDays > 3650) {
+      throw new HttpError(400, 'Срок действия должен быть от 1 до 3650 дней');
     }
 
     const db = getDb();
@@ -941,10 +927,7 @@ masterRouter.post('/tariffs', (req, res, next) => {
 
 masterRouter.patch('/tariffs/:tariffId/toggle', (req, res, next) => {
   try {
-    const tariffId = Number(req.params.tariffId);
-    if (!Number.isInteger(tariffId)) {
-      throw new HttpError(400, 'Некорректный ID тарифа');
-    }
+    const tariffId = parsePositiveIntId(req.params.tariffId, 'Некорректный ID тарифа');
 
     const db = getDb();
     const existing = db
@@ -965,14 +948,19 @@ masterRouter.patch('/tariffs/:tariffId/toggle', (req, res, next) => {
 
 masterRouter.post('/payments/manual', (req, res, next) => {
   try {
-    const familyId = Number(req.body?.family_id);
-    const tariffId = req.body?.tariff_id ? Number(req.body.tariff_id) : null;
+    const familyId = parsePositiveIntId(req.body?.family_id, 'Выберите семью');
+    const tariffId = req.body?.tariff_id
+      ? parsePositiveIntId(req.body.tariff_id, 'Некорректный ID тарифа')
+      : null;
     const amount = req.body?.amount !== undefined ? Number(req.body.amount) : undefined;
     const lessonsCount = req.body?.lessons_count !== undefined ? Number(req.body.lessons_count) : undefined;
     const method = req.body?.payment_method === 'cash' ? 'cash' : 'transfer';
 
-    if (!Number.isInteger(familyId)) {
-      throw new HttpError(400, 'Выберите семью');
+    if (amount !== undefined && (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000)) {
+      throw new HttpError(400, 'Сумма оплаты должна быть от 1 до 1 000 000 ₽');
+    }
+    if (lessonsCount !== undefined && (!Number.isInteger(lessonsCount) || lessonsCount < 0 || lessonsCount > 1000)) {
+      throw new HttpError(400, 'Количество занятий должно быть от 0 до 1000');
     }
 
     const result = createManualPayment({
@@ -991,11 +979,8 @@ masterRouter.post('/payments/manual', (req, res, next) => {
 
 masterRouter.post('/payments/:paymentId/receipt-url', (req, res, next) => {
   try {
-    const paymentId = Number(req.params.paymentId);
+    const paymentId = parsePositiveIntId(req.params.paymentId, 'Некорректный ID платежа');
     const receiptUrl = String(req.body?.receipt_url ?? '');
-    if (!Number.isInteger(paymentId)) {
-      throw new HttpError(400, 'Некорректный ID платежа');
-    }
     attachReceiptUrl(paymentId, receiptUrl);
     res.json({ ok: true });
   } catch (err) {
@@ -1008,24 +993,25 @@ masterRouter.post(
   receiptUpload.single('file'),
   (req, res, next) => {
     try {
-      const paymentId = Number(req.params.paymentId);
-      if (!Number.isInteger(paymentId)) {
-        throw new HttpError(400, 'Некорректный ID платежа');
-      }
+      const paymentId = parsePositiveIntId(req.params.paymentId, 'Некорректный ID платежа');
       if (!req.file) {
         throw new HttpError(400, 'Выберите файл чека (PDF, PNG, JPG или WebP)');
       }
       const ext = path.extname(req.file.filename).toLowerCase();
       if (!hasValidReceiptMagicBytes(req.file.path, ext)) {
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
         throw new HttpError(400, 'Содержимое файла не соответствует формату PDF, PNG, JPG или WebP');
       }
       const originalName = decodeUploadedFilename(req.file.originalname);
       attachReceiptFile(paymentId, req.file.filename, originalName);
       res.json({ ok: true });
     } catch (err) {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          // Ignore cleanup error
+        }
+      }
       next(err);
     }
   }
@@ -1089,7 +1075,7 @@ masterRouter.put('/settings', (req, res, next) => {
     const showHeroDuration = toFlag(req.body?.show_hero_duration, existing?.show_hero_duration ?? 1);
     const heroDurationText = sanitizeText(
       req.body?.hero_duration_text,
-      existing?.hero_duration_text ?? '90 минут',
+      existing?.hero_duration_text ?? '2 часа',
       'Длительность'
     );
     const showHeroGroups = toFlag(req.body?.show_hero_groups, existing?.show_hero_groups ?? 1);
@@ -1211,10 +1197,7 @@ masterRouter.get('/export/:type', (req, res, next) => {
 
 masterRouter.patch('/reviews/:reviewId/toggle', (req, res, next) => {
   try {
-    const reviewId = Number(req.params.reviewId);
-    if (!Number.isInteger(reviewId)) {
-      throw new HttpError(400, 'Некорректный ID отзыва');
-    }
+    const reviewId = parsePositiveIntId(req.params.reviewId, 'Некорректный ID отзыва');
     const db = getDb();
     const existing = db
       .prepare('SELECT id, is_published FROM reviews WHERE id = ?')
@@ -1232,10 +1215,7 @@ masterRouter.patch('/reviews/:reviewId/toggle', (req, res, next) => {
 
 masterRouter.delete('/reviews/:reviewId', (req, res, next) => {
   try {
-    const reviewId = Number(req.params.reviewId);
-    if (!Number.isInteger(reviewId)) {
-      throw new HttpError(400, 'Некорректный ID отзыва');
-    }
+    const reviewId = parsePositiveIntId(req.params.reviewId, 'Некорректный ID отзыва');
     const db = getDb();
     const result = db.prepare('DELETE FROM reviews WHERE id = ?').run(reviewId);
     if (result.changes === 0) {
@@ -1258,9 +1238,6 @@ masterRouter.post(
       }
       const ext = path.extname(req.file.filename).toLowerCase();
       if (!hasValidLegalMagicBytes(req.file.path, ext)) {
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
         throw new HttpError(400, 'Содержимое файла не соответствует выбранному формату');
       }
       const originalName = decodeUploadedFilename(req.file.originalname);
@@ -1272,6 +1249,13 @@ masterRouter.post(
       });
       res.json({ ok: true });
     } catch (err) {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          // Ignore cleanup error
+        }
+      }
       next(err);
     }
   }

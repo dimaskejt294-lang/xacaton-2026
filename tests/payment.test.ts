@@ -100,6 +100,13 @@ describe('YooKassa payment creation, verification, idempotency & exports', () =>
     expect(duplicateWebhook).toEqual({ status: 'succeeded', alreadyProcessed: true });
     expect(getActiveLessonsRemaining(db, fam.id)).toBe(4);
     expect(fetchSpy).toHaveBeenCalled();
+
+    // Unknown external_payment_id must reject with 404 locally BEFORE hitting YooKassa API
+    const callsBeforeUnknown = fetchSpy.mock.calls.length;
+    await expect(verifyAndApplyYooKassaPayment('nonexistent-payment-id-9999')).rejects.toThrow(
+      'Платёж не найден в базе мастерской'
+    );
+    expect(fetchSpy.mock.calls.length).toBe(callsBeforeUnknown);
   });
 
   it('attaches Moy Nalog receipt URL and file to payment and notifies family', () => {

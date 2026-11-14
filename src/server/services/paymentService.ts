@@ -115,7 +115,7 @@ export async function createOnlinePaymentForTariff(params: {
   try {
     const remote = await createYooKassaPayment({
       amountRub: tariff.price,
-      description: `${tariff.title} — Столярная мастерская «Ясна» (Сургут)`,
+      description: `${tariff.title} — Школа труда и столярная мастерская «Ясна» (Сургут)`,
       returnUrl,
       metadata: {
         local_payment_id: String(localPaymentId),
@@ -152,6 +152,18 @@ export async function verifyAndApplyYooKassaPayment(
 ): Promise<{ status: string; alreadyProcessed: boolean }> {
   if (!externalPaymentId || typeof externalPaymentId !== 'string') {
     throw new HttpError(400, 'Некорректный идентификатор платежа ЮKassa');
+  }
+
+  const dbCheck = getDb();
+  const existingLocal = dbCheck
+    .prepare('SELECT id, status FROM payments WHERE external_payment_id = ?')
+    .get(externalPaymentId) as { id: number; status: PaymentRow['status'] } | undefined;
+
+  if (!existingLocal) {
+    throw new HttpError(404, 'Платёж не найден в базе мастерской');
+  }
+  if (existingLocal.status === 'succeeded') {
+    return { status: 'succeeded', alreadyProcessed: true };
   }
 
   // Independent server-side verification against YooKassa API (prevents webhook spoofing)
@@ -263,7 +275,10 @@ export function createManualPayment(params: {
 }
 
 export function attachReceiptUrl(paymentId: number, receiptUrl: string): void {
-  const trimmed = receiptUrl.trim();
+  const trimmed = receiptUrl.replace(/[\u0000-\u001F\u007F]/g, '').trim();
+  if (!trimmed || trimmed.length > 1000) {
+    throw new HttpError(400, 'Ссылка на чек должна содержать от 1 до 1000 символов');
+  }
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
@@ -272,6 +287,9 @@ export function attachReceiptUrl(paymentId: number, receiptUrl: string): void {
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     throw new HttpError(400, 'Ссылка на чек должна начинаться с https:// или http://');
+  }
+  if (parsed.username || parsed.password) {
+    throw new HttpError(400, 'Ссылка на чек не должна содержать учётные данные');
   }
 
   const db = getDb();

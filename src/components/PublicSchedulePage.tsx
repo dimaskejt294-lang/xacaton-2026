@@ -6,7 +6,6 @@ import {
   KeyRound,
   MapPin,
   MessageSquare,
-  Phone,
   Sparkles,
   Star,
   User,
@@ -123,19 +122,23 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
           <div>
             <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#6B7280]">
               <MapPin className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
-              <span>г. Сургут</span>
+              <span>г. Сургут, ул. 30 лет Победы, 21/3</span>
               <span aria-hidden="true">·</span>
               <span>Руководитель Денис Авимский</span>
             </div>
 
-            <h1 className="mt-3 font-display text-3xl font-bold tracking-tight text-[#111827] sm:text-4xl [text-wrap:balance]">
-              Детская столярная мастерская «Ясна»
+            <h1 className="mt-4 font-display text-3xl font-bold tracking-tight text-[#111827] sm:text-4xl [text-wrap:balance]">
+              Ясна — школа труда и столярная мастерская в Сургуте ☀️
             </h1>
 
             <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-[#6B7280]">
-              Живая работа с массивом сосны, кедра и дуба, ручным инструментом и токарным
-              станком. Записывайтесь на занятия онлайн, отслеживайте остаток абонемента
-              и получайте чеки без переписок.
+              Здесь взрослые и дети от 6 лет учатся работать руками: пилить, шлифовать, собирать
+              изделия из дерева и доводить дело до результата.
+            </p>
+
+            <p className="mt-2.5 max-w-2xl text-sm font-medium text-[#374151]">
+              Группы, индивидуальные занятия, семейные мастер-классы, дни рождения и
+              мастер-классы для компаний.
             </p>
 
             {/* Concrete configurable fact grid */}
@@ -151,7 +154,7 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
               if ((s?.show_hero_duration ?? 1) === 1) {
                 factCards.push({
                   label: 'Длительность',
-                  value: s?.hero_duration_text || '90 минут',
+                  value: s?.hero_duration_text || '2 часа',
                 });
               }
               if ((s?.show_hero_groups ?? 1) === 1) {
@@ -248,26 +251,28 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
           {!heroImgFailed ? (
             <img
               src={workshopHeroImg}
-              alt="Верстак и столярные инструменты в детской мастерской Ясна"
+              alt="Верстак и столярные инструменты в школе труда Ясна"
               referrerPolicy="no-referrer"
               onError={() => setHeroImgFailed(true)}
               className="h-full w-full object-cover transition-transform duration-500 hover:scale-[1.02]"
             />
           ) : (
             <div className="flex h-full min-h-[280px] flex-col items-center justify-center bg-gradient-to-br from-[#F9F4EE] to-[#EDE5DA] p-8 text-center">
-              <Hammer className="h-10 w-10 text-[#C86D2D]" strokeWidth={1.5} />
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FDF4ED] text-[#C86D2D] shadow-sm">
+                <Hammer className="h-7 w-7" strokeWidth={1.75} />
+              </div>
               <div className="mt-3 font-display text-lg font-semibold text-[#111827]">
-                Мастерская «Ясна»
+                Школа труда «Ясна»
               </div>
               <p className="mt-1 text-sm text-[#6B7280]">
-                Живое столярное дело для детей в Сургуте
+                Живое столярное дело для взрослых и детей от 6 лет в Сургуте
               </p>
             </div>
           )}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/30 to-transparent p-5">
             <div className="text-xs font-medium text-white/85">Живая практика с первого урока</div>
             <div className="mt-0.5 text-sm font-semibold text-white">
-              Каждый ребёнок уносит готовое изделие домой
+              Готовое изделие и навык работы руками на каждом занятии
             </div>
           </div>
         </div>
@@ -286,14 +291,14 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
             {!craftImgFailed ? (
               <img
                 src={craftFormatsImg}
-                alt="Готовые детские изделия из дерева: скворечник, подставка и подсвечник"
+                alt="Готовые изделия из дерева: скворечник, подставка и подсвечник"
                 referrerPolicy="no-referrer"
                 onError={() => setCraftImgFailed(true)}
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="flex h-full items-center justify-center bg-[#F9F4EE] text-[#C86D2D]">
-                <Hammer className="h-8 w-8" strokeWidth={1.5} />
+              <div className="flex h-full items-center justify-center bg-[#F9F4EE]">
+                <Sparkles className="h-10 w-10 text-[#C86D2D]" strokeWidth={1.5} />
               </div>
             )}
           </div>
@@ -319,28 +324,11 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
                 <Users className="h-4 w-4" strokeWidth={1.5} />
               </div>
               <h3 className="mt-3 font-display text-base font-semibold text-[#111827]">
-                Групповая столярка
+                Группы и индивидуально
               </h3>
               <p className="mt-1.5 text-xs leading-relaxed text-[#6B7280]">
-                Небольшие группы до 4 детей. Разметка, пиление, шлифовка и сборка полок,
-                шкатулок и кормушек.
-              </p>
-            </motion.div>
-
-            <motion.div
-              whileHover={{ y: -2 }}
-              transition={{ duration: 0.16 }}
-              className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FDF4ED] text-[#C86D2D]">
-                <User className="h-4 w-4" strokeWidth={1.5} />
-              </div>
-              <h3 className="mt-3 font-display text-base font-semibold text-[#111827]">
-                Токарный станок
-              </h3>
-              <p className="mt-1.5 text-xs leading-relaxed text-[#6B7280]">
-                Индивидуально 1 на 1 с мастером. Освоение резцов и точение изделий из массива
-                берёзы и кедра.
+                Взрослые и дети от 6 лет. Групповые занятия по субботам и воскресеньям в 10:00,
+                13:00 и 16:00 — трудимся два часа, или индивидуально 1 на 1 с мастером.
               </p>
             </motion.div>
 
@@ -353,11 +341,28 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
                 <Sparkles className="h-4 w-4" strokeWidth={1.5} />
               </div>
               <h3 className="mt-3 font-display text-base font-semibold text-[#111827]">
-                Отработка и перенос
+                Семейные МК и дни рождения
               </h3>
               <p className="mt-1.5 text-xs leading-relaxed text-[#6B7280]">
-                Если ребёнок не смог прийти, выберите удобное время в другой группе прямо из
-                личного кабинета.
+                Совместное творчество родителей и детей, а также праздники в мастерской, где
+                каждый гость делает своё изделие.
+              </p>
+            </motion.div>
+
+            <motion.div
+              whileHover={{ y: -2 }}
+              transition={{ duration: 0.16 }}
+              className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+            >
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FDF4ED] text-[#C86D2D]">
+                <User className="h-4 w-4" strokeWidth={1.5} />
+              </div>
+              <h3 className="mt-3 font-display text-base font-semibold text-[#111827]">
+                Мастер-классы для компаний
+              </h3>
+              <p className="mt-1.5 text-xs leading-relaxed text-[#6B7280]">
+                Командные столярные встречи и тимбилдинги: живая работа руками, смена
+                обстановки и готовый результат для каждого участника.
               </p>
             </motion.div>
           </div>
@@ -403,7 +408,8 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
               Актуальное расписание
             </h2>
             <p className="mt-1 text-sm text-[#6B7280]">
-              Свободные места обновляются в реальном времени
+              Групповые занятия в субботу и воскресенье: 10:00, 13:00 и 16:00 (трудимся 2 часа).
+              Свободные места обновляются в реальном времени.
             </p>
           </div>
 
@@ -638,30 +644,6 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
         </section>
       )}
 
-      {/* Footer */}
-      <footer className="mt-12 flex flex-col justify-between gap-4 border-t border-[#E5E7EB] pt-6 text-sm text-[#6B7280] sm:flex-row sm:items-center">
-        <div>
-          <div className="font-medium text-[#111827]">
-            Детская столярная мастерская «Ясна»
-          </div>
-          <div className="mt-0.5 text-xs">
-            г. Сургут · Руководитель Денис Авимский
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-xs">
-          <span className="inline-flex items-center gap-1.5 tabular-nums">
-            <Phone className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
-            +7 (922) 400-10-00
-          </span>
-          <button
-            type="button"
-            onClick={() => onNavigate('/master')}
-            className="cursor-pointer font-medium text-[#111827] underline-offset-4 hover:underline"
-          >
-            Вход для мастера
-          </button>
-        </div>
-      </footer>
     </div>
   );
 };

@@ -15,7 +15,6 @@ import {
   Grid3x3,
   History,
   List,
-  Lock,
   LogOut,
   Pencil,
   Plus,
@@ -28,6 +27,7 @@ import {
   Upload,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -35,15 +35,18 @@ import type { BookingStatus, LegalDocKey, LessonType, MasterDashboardData, Maste
 import {
   bookingStatusClasses,
   bookingStatusLabel,
+  defaultNextWeekendDatetimeLocal,
   formatDateRu,
   formatDateTimeRu,
   formatMoney,
+  isoToSurgutDatetimeLocal,
   lessonTypeLabel,
   paymentMethodLabel,
   paymentStatusClasses,
   paymentStatusLabel,
   pluralizeLessons,
   pluralizeYears,
+  surgutDatetimeLocalToIso,
 } from '../utils/format.ts';
 import { ScheduleCalendarView } from './ScheduleCalendarView.tsx';
 import { SchoolJournalGrid } from './SchoolJournalGrid.tsx';
@@ -76,22 +79,7 @@ function writeStoredMasterSession(token: string | null): void {
   }
 }
 
-function defaultTomorrowDatetimeLocal(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  d.setHours(15, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
-function formatDatetimeLocalInput(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
-    return defaultTomorrowDatetimeLocal();
-  }
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) => {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -110,9 +98,9 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [editingLessonId, setEditingLessonId] = useState<number | null>(null);
   const [lessonTitle, setLessonTitle] = useState('');
   const [lessonType, setLessonType] = useState<LessonType>('group');
-  const [lessonStart, setLessonStart] = useState(defaultTomorrowDatetimeLocal);
-  const [lessonDuration, setLessonDuration] = useState(90);
-  const [lessonCapacity, setLessonCapacity] = useState(2);
+  const [lessonStart, setLessonStart] = useState(defaultNextWeekendDatetimeLocal);
+  const [lessonDuration, setLessonDuration] = useState(120);
+  const [lessonCapacity, setLessonCapacity] = useState(4);
   const [lessonPrice, setLessonPrice] = useState(1200);
   const [lessonDesc, setLessonDesc] = useState('');
 
@@ -155,6 +143,12 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
 
   // Receipts state
   const [receiptUrlInputs, setReceiptUrlInputs] = useState<Record<number, string>>({});
+  const [previewReceipt, setPreviewReceipt] = useState<{
+    name: string;
+    blobUrl: string;
+    isPdf: boolean;
+  } | null>(null);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
 
   // Settings & CSV import state
   const [freeCancelHours, setFreeCancelHours] = useState(24);
@@ -163,7 +157,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [showHeroAge, setShowHeroAge] = useState(true);
   const [heroAgeText, setHeroAgeText] = useState('6–14 лет');
   const [showHeroDuration, setShowHeroDuration] = useState(true);
-  const [heroDurationText, setHeroDurationText] = useState('90 минут');
+  const [heroDurationText, setHeroDurationText] = useState('2 часа');
   const [showHeroGroups, setShowHeroGroups] = useState(true);
   const [heroGroupsText, setHeroGroupsText] = useState('2–4 места');
   const [showHeroFreeCancel, setShowHeroFreeCancel] = useState(true);
@@ -205,6 +199,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     [sessionToken]
   );
 
+  useEffect(() => {
+    const activeBlobUrl = previewReceipt?.blobUrl;
+    return () => {
+      if (activeBlobUrl) {
+        URL.revokeObjectURL(activeBlobUrl);
+      }
+    };
+  }, [previewReceipt]);
+
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
@@ -227,7 +230,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       setShowHeroAge((json.settings.show_hero_age ?? 1) === 1);
       setHeroAgeText(json.settings.hero_age_text || '6–14 лет');
       setShowHeroDuration((json.settings.show_hero_duration ?? 1) === 1);
-      setHeroDurationText(json.settings.hero_duration_text || '90 минут');
+      setHeroDurationText(json.settings.hero_duration_text || '2 часа');
       setShowHeroGroups((json.settings.show_hero_groups ?? 1) === 1);
       setHeroGroupsText(json.settings.hero_groups_text || '2–4 места');
       setShowHeroFreeCancel((json.settings.show_hero_free_cancel ?? 1) === 1);
@@ -310,9 +313,9 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     setEditingLessonId(null);
     setLessonTitle('');
     setLessonType('group');
-    setLessonStart(defaultTomorrowDatetimeLocal());
-    setLessonDuration(90);
-    setLessonCapacity(2);
+    setLessonStart(defaultNextWeekendDatetimeLocal());
+    setLessonDuration(120);
+    setLessonCapacity(4);
     setLessonPrice(1200);
     setLessonDesc('');
   };
@@ -322,7 +325,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     setEditingLessonId(lesson.id);
     setLessonTitle(lesson.title);
     setLessonType(lesson.lesson_type);
-    setLessonStart(formatDatetimeLocalInput(lesson.start_time));
+    setLessonStart(isoToSurgutDatetimeLocal(lesson.start_time));
     setLessonDuration(lesson.duration_minutes);
     setLessonCapacity(lesson.capacity);
     setLessonPrice(lesson.single_price);
@@ -334,7 +337,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const startCreateLessonOnDate = (dateKey: string) => {
     setBanner(null);
     resetLessonForm();
-    setLessonStart(`${dateKey}T15:00`);
+    setLessonStart(`${dateKey}T10:00`);
     setShowNewLesson(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -350,7 +353,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       body: JSON.stringify({
         title: lessonTitle,
         lesson_type: lessonType,
-        start_time: new Date(lessonStart).toISOString(),
+        start_time: surgutDatetimeLocalToIso(lessonStart),
         duration_minutes: lessonDuration,
         capacity: lessonType === 'individual' ? 1 : lessonCapacity,
         single_price: lessonPrice,
@@ -692,6 +695,54 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     await loadDashboard();
   };
 
+  const handleDownloadMasterFile = async (url: string, fallbackName: string, key: string) => {
+    setBanner(null);
+    setDownloadingKey(key);
+    try {
+      const res = await masterFetch(url);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setBanner({ type: 'error', text: body.error || 'Не удалось скачать файл' });
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fallbackName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      setBanner({ type: 'error', text: 'Ошибка сети при скачивании файла' });
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleOpenMasterReceipt = async (paymentId: number, originalName?: string | null) => {
+    setBanner(null);
+    setDownloadingKey(`receipt-view-${paymentId}`);
+    try {
+      const res = await masterFetch(`/api/files/receipts/${paymentId}?inline=1`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setBanner({ type: 'error', text: body.error || 'Не удалось открыть файл чека' });
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const name = originalName || `Чек_${paymentId}`;
+      const isPdf = blob.type === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+      setPreviewReceipt({ name, blobUrl, isPdf });
+    } catch {
+      setBanner({ type: 'error', text: 'Ошибка сети при загрузке файла чека' });
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setBanner(null);
@@ -926,8 +977,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
           animate={{ opacity: 1, y: 0 }}
           className="rounded-2xl border border-[#E5E7EB] bg-white p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_10px_28px_-16px_rgba(17,24,39,0.08)] sm:p-8"
         >
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FDF4ED] text-[#C86D2D]">
-            <Lock className="h-5 w-5" strokeWidth={1.5} />
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#FDF4ED] text-[#C86D2D]">
+            <ShieldCheck className="h-6 w-6" strokeWidth={1.75} />
           </div>
           <h1 className="mt-4 font-display text-2xl font-bold text-[#111827]">
             Панель мастера «Ясна»
@@ -987,9 +1038,9 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="text-xs font-medium text-[#6B7280]">
-            Столярная мастерская «Ясна» · г. Сургут
+            Школа труда и столярная мастерская «Ясна» · г. Сургут
           </div>
-          <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-[#111827]">
+          <h1 className="mt-0.5 font-display text-2xl font-bold tracking-tight text-[#111827]">
             Управление мастерской
           </h1>
         </div>
@@ -2274,27 +2325,34 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                             )}
                             {p.has_receipt_file === 1 && (
                               <>
-                                <a
-                                  href={`/api/files/receipts/${p.id}?inline=1${
-                                    sessionToken ? `&session=${encodeURIComponent(sessionToken)}` : ''
-                                  }`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#ECFDF5] px-3 text-xs font-semibold text-[#065F46]"
+                                <button
+                                  type="button"
+                                  disabled={downloadingKey === `receipt-view-${p.id}`}
+                                  onClick={() =>
+                                    void handleOpenMasterReceipt(p.id, p.receipt_original_name)
+                                  }
+                                  className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#ECFDF5] px-3 text-xs font-semibold text-[#065F46] hover:bg-[#D1FAE5] disabled:opacity-60"
                                 >
-                                  <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                  Открыть чек
-                                </a>
-                                <a
-                                  href={`/api/files/receipts/${p.id}${
-                                    sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : ''
-                                  }`}
-                                  download={p.receipt_original_name || 'receipt'}
-                                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB]"
+                                  <Eye className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  {downloadingKey === `receipt-view-${p.id}`
+                                    ? 'Открытие...'
+                                    : 'Открыть чек'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={downloadingKey === `receipt-dl-${p.id}`}
+                                  onClick={() =>
+                                    void handleDownloadMasterFile(
+                                      `/api/files/receipts/${p.id}`,
+                                      p.receipt_original_name || `receipt_${p.id}`,
+                                      `receipt-dl-${p.id}`
+                                    )
+                                  }
+                                  className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB] disabled:opacity-60"
                                 >
                                   <Download className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
                                   Скачать
-                                </a>
+                                </button>
                               </>
                             )}
                           </div>
@@ -2449,7 +2507,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                               disabled={!showHeroDuration}
                               value={heroDurationText}
                               onChange={(e) => setHeroDurationText(e.target.value)}
-                              placeholder="90 минут"
+                              placeholder="2 часа"
                               className="min-h-[38px] w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF] sm:w-44"
                             />
                           </div>
@@ -2514,33 +2572,51 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       </p>
 
                       <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                        <a
-                          href={`/api/master/export/clients${
-                            sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : ''
-                          }`}
-                          className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                        <button
+                          type="button"
+                          disabled={downloadingKey === 'export-clients'}
+                          onClick={() =>
+                            void handleDownloadMasterFile(
+                              '/api/master/export/clients',
+                              'yasna-clients.csv',
+                              'export-clients'
+                            )
+                          }
+                          className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6] disabled:opacity-60"
                         >
                           <FileSpreadsheet className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
                           Клиенты
-                        </a>
-                        <a
-                          href={`/api/master/export/attendance${
-                            sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : ''
-                          }`}
-                          className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                        </button>
+                        <button
+                          type="button"
+                          disabled={downloadingKey === 'export-attendance'}
+                          onClick={() =>
+                            void handleDownloadMasterFile(
+                              '/api/master/export/attendance',
+                              'yasna-attendance.csv',
+                              'export-attendance'
+                            )
+                          }
+                          className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6] disabled:opacity-60"
                         >
                           <FileSpreadsheet className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
                           Посещения
-                        </a>
-                        <a
-                          href={`/api/master/export/payments${
-                            sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : ''
-                          }`}
-                          className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                        </button>
+                        <button
+                          type="button"
+                          disabled={downloadingKey === 'export-payments'}
+                          onClick={() =>
+                            void handleDownloadMasterFile(
+                              '/api/master/export/payments',
+                              'yasna-payments.csv',
+                              'export-payments'
+                            )
+                          }
+                          className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6] disabled:opacity-60"
                         >
                           <FileSpreadsheet className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
                           Оплаты
-                        </a>
+                        </button>
                       </div>
 
                       <div className="mt-5 border-t border-[#F3F4F6] pt-4">
@@ -2553,15 +2629,23 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                               Файл yasna.db · {(data.db_size_bytes / 1024).toFixed(1)} КБ
                             </div>
                           </div>
-                          <a
-                            href={`/api/master/backup${
-                              sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : ''
-                            }`}
-                            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#111827] px-4 text-xs font-medium text-white hover:bg-[#1F2937]"
+                          <button
+                            type="button"
+                            disabled={downloadingKey === 'db-backup'}
+                            onClick={() =>
+                              void handleDownloadMasterFile(
+                                '/api/master/backup',
+                                `yasna-backup-${new Date().toISOString().slice(0, 10)}.db`,
+                                'db-backup'
+                              )
+                            }
+                            className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-[#111827] px-4 text-xs font-medium text-white hover:bg-[#1F2937] disabled:opacity-60"
                           >
                             <Database className="h-4 w-4" strokeWidth={1.5} />
-                            Скачать бэкап БД
-                          </a>
+                            {downloadingKey === 'db-backup'
+                              ? 'Выгрузка...'
+                              : 'Скачать бэкап БД'}
+                          </button>
                         </div>
                       </div>
 
@@ -2954,6 +3038,63 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
             </AnimatePresence>
           </div>
         )
+      )}
+
+      {/* Receipt File Preview Modal */}
+      {previewReceipt && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Просмотр чека"
+        >
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-5 py-3.5">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-[#6B7280]">Чек из «Мой налог»</div>
+                <div className="truncate font-display text-sm font-semibold text-[#111827]">
+                  {previewReceipt.name}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <a
+                  href={previewReceipt.blobUrl}
+                  download={previewReceipt.name}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]"
+                >
+                  <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Скачать
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewReceipt(null)}
+                  aria-label="Закрыть просмотр чека"
+                  className="inline-flex min-h-[40px] min-w-[40px] cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#111827]"
+                >
+                  <X className="h-4 w-4" strokeWidth={1.5} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto bg-[#F9FAFB] p-4">
+              {previewReceipt.isPdf ? (
+                <iframe
+                  src={previewReceipt.blobUrl}
+                  title={previewReceipt.name}
+                  className="h-[68vh] w-full rounded-xl border border-[#E5E7EB] bg-white"
+                />
+              ) : (
+                <div className="flex items-center justify-center">
+                  <img
+                    src={previewReceipt.blobUrl}
+                    alt={previewReceipt.name}
+                    className="max-h-[70vh] w-auto rounded-xl border border-[#E5E7EB] bg-white object-contain shadow-sm"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

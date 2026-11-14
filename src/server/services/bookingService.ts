@@ -50,6 +50,7 @@ function getWorkshopSettings(db: DatabaseSync): SettingsRow {
 function formatDateRu(isoDate: string): string {
   const date = new Date(isoDate);
   return date.toLocaleString('ru-RU', {
+    timeZone: 'Asia/Yekaterinburg',
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',

@@ -3,7 +3,9 @@ import { getDb, HttpError } from '../db.ts';
 import {
   assertBookingBelongsToFamily,
   assertNotificationBelongsToFamily,
+  createRateLimiter,
   getSafeRequestOrigin,
+  parsePositiveIntId,
   resolveFamilyByToken,
 } from '../security.ts';
 import {
@@ -32,7 +34,37 @@ import {
 
 export const parentRouter = Router();
 
-parentRouter.get('/:token', (req, res, next) => {
+const parentReadLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 120,
+  message: 'Слишком много запросов к личному кабинету. Подождите минуту.',
+});
+
+const parentActionLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 30,
+  message: 'Слишком много действий за минуту. Пожалуйста, подождите.',
+});
+
+const parentPaymentLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: 15,
+  message: 'Слишком много попыток оплаты. Подождите 5 минут.',
+});
+
+const parentReviewLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 5,
+  message: 'Слишком частая отправка отзывов. Попробуйте чуть позже.',
+});
+
+const parentPushTestLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: 10,
+  message: 'Слишком много тестовых уведомлений. Подождите 5 минут.',
+});
+
+parentRouter.get('/:token', parentReadLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
     const db = getDb();
@@ -194,16 +226,12 @@ parentRouter.get('/:token', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/bookings', (req, res, next) => {
+parentRouter.post('/:token/bookings', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const lessonId = Number(req.body?.lesson_id);
-    const childId = Number(req.body?.child_id);
+    const lessonId = parsePositiveIntId(req.body?.lesson_id, 'Укажите корректный идентификатор занятия');
+    const childId = parsePositiveIntId(req.body?.child_id, 'Укажите корректный идентификатор ребёнка');
     const isMakeup = Boolean(req.body?.is_makeup);
-
-    if (!Number.isInteger(lessonId) || !Number.isInteger(childId)) {
-      throw new HttpError(400, 'Укажите корректные идентификаторы занятия и ребёнка');
-    }
 
     const result = createBooking({
       lessonId,
@@ -218,15 +246,11 @@ parentRouter.post('/:token/bookings', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/waitlist', (req, res, next) => {
+parentRouter.post('/:token/waitlist', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const lessonId = Number(req.body?.lesson_id);
-    const childId = Number(req.body?.child_id);
-
-    if (!Number.isInteger(lessonId) || !Number.isInteger(childId)) {
-      throw new HttpError(400, 'Укажите корректные идентификаторы занятия и ребёнка');
-    }
+    const lessonId = parsePositiveIntId(req.body?.lesson_id, 'Укажите корректный идентификатор занятия');
+    const childId = parsePositiveIntId(req.body?.child_id, 'Укажите корректный идентификатор ребёнка');
 
     const result = joinWaitlist({
       lessonId,
@@ -240,13 +264,10 @@ parentRouter.post('/:token/waitlist', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/bookings/:bookingId/cancel', (req, res, next) => {
+parentRouter.post('/:token/bookings/:bookingId/cancel', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const bookingId = Number(req.params.bookingId);
-    if (!Number.isInteger(bookingId)) {
-      throw new HttpError(400, 'Некорректный идентификатор записи');
-    }
+    const bookingId = parsePositiveIntId(req.params.bookingId, 'Некорректный идентификатор записи');
     assertBookingBelongsToFamily(bookingId, family.id);
     const result = cancelBookingByParent(bookingId, family.id);
     res.json({ ok: true, charged: result.charged });
@@ -255,13 +276,10 @@ parentRouter.post('/:token/bookings/:bookingId/cancel', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/payments', async (req, res, next) => {
+parentRouter.post('/:token/payments', parentPaymentLimiter, async (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const tariffId = Number(req.body?.tariff_id);
-    if (!Number.isInteger(tariffId)) {
-      throw new HttpError(400, 'Выберите тариф для оплаты');
-    }
+    const tariffId = parsePositiveIntId(req.body?.tariff_id, 'Выберите тариф для оплаты');
 
     if (
       req.body?.accepted_offer !== true ||
@@ -295,13 +313,10 @@ parentRouter.post('/:token/payments', async (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/payments/:paymentId/sync', async (req, res, next) => {
+parentRouter.post('/:token/payments/:paymentId/sync', parentPaymentLimiter, async (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const paymentId = Number(req.params.paymentId);
-    if (!Number.isInteger(paymentId)) {
-      throw new HttpError(400, 'Некорректный идентификатор платежа');
-    }
+    const paymentId = parsePositiveIntId(req.params.paymentId, 'Некорректный идентификатор платежа');
 
     const db = getDb();
     const row = db
@@ -329,13 +344,13 @@ parentRouter.post('/:token/payments/:paymentId/sync', async (req, res, next) => 
   }
 });
 
-parentRouter.post('/:token/notifications/:notificationId/read', (req, res, next) => {
+parentRouter.post('/:token/notifications/:notificationId/read', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const notificationId = Number(req.params.notificationId);
-    if (!Number.isInteger(notificationId)) {
-      throw new HttpError(400, 'Некорректный идентификатор уведомления');
-    }
+    const notificationId = parsePositiveIntId(
+      req.params.notificationId,
+      'Некорректный идентификатор уведомления'
+    );
     assertNotificationBelongsToFamily(notificationId, family.id);
     markNotificationRead(notificationId, family.id);
     res.json({ ok: true });
@@ -344,7 +359,7 @@ parentRouter.post('/:token/notifications/:notificationId/read', (req, res, next)
   }
 });
 
-parentRouter.post('/:token/notifications/read-all', (req, res, next) => {
+parentRouter.post('/:token/notifications/read-all', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
     markAllNotificationsRead(family.id);
@@ -354,7 +369,7 @@ parentRouter.post('/:token/notifications/read-all', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/reviews', (req, res, next) => {
+parentRouter.post('/:token/reviews', parentReviewLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
     const rating = Number(req.body?.rating);
@@ -423,10 +438,13 @@ parentRouter.post('/:token/push/subscribe', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/push/unsubscribe', (req, res, next) => {
+parentRouter.post('/:token/push/unsubscribe', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const endpoint = String(req.body?.endpoint ?? '');
+    const endpoint = String(req.body?.endpoint ?? '').trim();
+    if (endpoint.length > 1000) {
+      throw new HttpError(400, 'Некорректный адрес push-подписки');
+    }
     const result = removePushSubscription(family.id, endpoint);
     res.json({ ok: true, count: result.count });
   } catch (err) {
@@ -434,7 +452,7 @@ parentRouter.post('/:token/push/unsubscribe', (req, res, next) => {
   }
 });
 
-parentRouter.post('/:token/push/test', async (req, res, next) => {
+parentRouter.post('/:token/push/test', parentPushTestLimiter, async (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
     const title = 'Мастерская «Ясна» — проверка уведомлений';

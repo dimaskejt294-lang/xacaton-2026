@@ -11,13 +11,19 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'sw-push.js'],
+        includeAssets: [
+          'favicon.png',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'sw-push.js',
+        ],
         manifest: {
           id: '/',
-          name: 'Ясна — Столярная мастерская',
+          name: 'Ясна — школа труда и столярная мастерская',
           short_name: 'Ясна',
           description:
-            'Личный кабинет родителей и расписание детской столярной мастерской «Ясна» (г. Сургут).',
+            'Школа труда и столярная мастерская в Сургуте. Группы, индивидуальные занятия, семейные мастер-классы, дни рождения и мастер-классы для компаний.',
           theme_color: '#C86D2D',
           background_color: '#F5F6F8',
           display: 'standalone',

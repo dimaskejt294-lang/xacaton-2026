@@ -1,7 +1,7 @@
 import { CalendarPlus, Check, Grid3x3, Search, X } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import type { BookingStatus, MasterFamily, MasterLesson, MasterLessonBooking } from '../types.ts';
-import { formatDateTimeRu, pluralizeYears } from '../utils/format.ts';
+import { formatDateTimeRu, getSurgutDateParts, pluralizeYears } from '../utils/format.ts';
 
 interface SchoolJournalGridProps {
   lessons: MasterLesson[];
@@ -26,14 +26,13 @@ interface SelectedCell {
 }
 
 function shortDateParts(iso: string): { dayMonth: string; time: string } {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
+  const parts = getSurgutDateParts(iso);
+  if (!parts) {
     return { dayMonth: '—', time: '' };
   }
-  const pad = (n: number) => String(n).padStart(2, '0');
   return {
-    dayMonth: `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`,
-    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    dayMonth: `${parts.day}.${parts.month}`,
+    time: `${parts.hour}:${parts.minute}`,
   };
 }
 

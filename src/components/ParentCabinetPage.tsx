@@ -75,8 +75,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
   const [reviewText, setReviewText] = useState('');
   const [previewReceipt, setPreviewReceipt] = useState<{
     name: string;
-    inlineUrl: string;
-    downloadUrl: string;
+    blobUrl: string;
     isPdf: boolean;
   } | null>(null);
   const [selectedTariffId, setSelectedTariffId] = useState<number | null>(null);
@@ -99,6 +98,15 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       setPushSubscribedOnDevice(status.subscribed);
     });
   }, [token]);
+
+  useEffect(() => {
+    const activeBlobUrl = previewReceipt?.blobUrl;
+    return () => {
+      if (activeBlobUrl) {
+        URL.revokeObjectURL(activeBlobUrl);
+      }
+    };
+  }, [previewReceipt]);
 
   const loadCabinet = useCallback(async () => {
     setLoading(true);
@@ -406,6 +414,58 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
     await loadCabinet();
   };
 
+  const handleOpenReceiptPreview = async (paymentId: number, originalName?: string | null) => {
+    setBanner(null);
+    setBusyKey(`receipt-view-${paymentId}`);
+    try {
+      const res = await fetch(`/api/files/receipts/${paymentId}?inline=1`, {
+        headers: { 'X-Family-Token': token },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setBanner({ type: 'error', text: body.error || 'Не удалось загрузить файл чека' });
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const name = originalName || `Чек_${paymentId}`;
+      const isPdf = blob.type === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+      setPreviewReceipt({ name, blobUrl, isPdf });
+    } catch {
+      setBanner({ type: 'error', text: 'Ошибка загрузки файла чека' });
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const handleDownloadReceiptFile = async (paymentId: number, originalName?: string | null) => {
+    setBanner(null);
+    setBusyKey(`receipt-dl-${paymentId}`);
+    try {
+      const res = await fetch(`/api/files/receipts/${paymentId}`, {
+        headers: { 'X-Family-Token': token },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setBanner({ type: 'error', text: body.error || 'Не удалось скачать файл чека' });
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = originalName || `receipt_${paymentId}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      setBanner({ type: 'error', text: 'Ошибка скачивания файла чека' });
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const handleEnablePush = async () => {
     setBanner(null);
     setPushBusy(true);
@@ -529,7 +589,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center">
         <div className="rounded-2xl border border-[#E5E7EB] bg-white p-8 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-          <AlertCircle className="mx-auto h-10 w-10 text-[#991B1B]" strokeWidth={1.5} />
+          <AlertCircle className="mx-auto h-9 w-9 text-[#991B1B]" strokeWidth={1.5} />
           <h1 className="mt-4 font-display text-xl font-bold text-[#111827]">
             Кабинет недоступен
           </h1>
@@ -559,7 +619,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           <div className="text-xs font-medium text-[#6B7280]">
             Личный кабинет семьи · {data.family.phone}
           </div>
-          <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-[#111827]">
+          <h1 className="mt-0.5 font-display text-2xl font-bold tracking-tight text-[#111827]">
             {data.family.parent_name}
           </h1>
         </div>
@@ -1471,32 +1531,36 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                             <>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  const name = payment.receipt_original_name || `Чек_${payment.id}`;
-                                  const isPdf = name.toLowerCase().endsWith('.pdf');
-                                  const base = `/api/files/receipts/${payment.id}?token=${encodeURIComponent(token)}`;
-                                  setPreviewReceipt({
-                                    name,
-                                    inlineUrl: `${base}&inline=1`,
-                                    downloadUrl: base,
-                                    isPdf,
-                                  });
-                                }}
-                                className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#ECFDF5] px-3.5 text-xs font-semibold text-[#065F46] hover:bg-[#D1FAE5]"
+                                disabled={busyKey === `receipt-view-${payment.id}`}
+                                onClick={() =>
+                                  void handleOpenReceiptPreview(
+                                    payment.id,
+                                    payment.receipt_original_name
+                                  )
+                                }
+                                className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#ECFDF5] px-3.5 text-xs font-semibold text-[#065F46] hover:bg-[#D1FAE5] disabled:opacity-60"
                               >
                                 <Eye className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                Открыть чек
+                                {busyKey === `receipt-view-${payment.id}`
+                                  ? 'Открытие...'
+                                  : 'Открыть чек'}
                               </button>
-                              <a
-                                href={`/api/files/receipts/${payment.id}?token=${encodeURIComponent(
-                                  token
-                                )}`}
-                                download={payment.receipt_original_name || 'receipt'}
-                                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB]"
+                              <button
+                                type="button"
+                                disabled={busyKey === `receipt-dl-${payment.id}`}
+                                onClick={() =>
+                                  void handleDownloadReceiptFile(
+                                    payment.id,
+                                    payment.receipt_original_name
+                                  )
+                                }
+                                className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB] disabled:opacity-60"
                               >
                                 <Download className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
-                                Скачать чек
-                              </a>
+                                {busyKey === `receipt-dl-${payment.id}`
+                                  ? 'Скачивание...'
+                                  : 'Скачать чек'}
+                              </button>
                             </>
                           )}
 
@@ -1744,16 +1808,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <a
-                  href={previewReceipt.inlineUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB]"
-                >
-                  <ExternalLink className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
-                  В новой вкладке
-                </a>
-                <a
-                  href={previewReceipt.downloadUrl}
+                  href={previewReceipt.blobUrl}
                   download={previewReceipt.name}
                   className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]"
                 >
@@ -1774,14 +1829,14 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
             <div className="flex-1 overflow-auto bg-[#F9FAFB] p-4">
               {previewReceipt.isPdf ? (
                 <iframe
-                  src={previewReceipt.inlineUrl}
+                  src={previewReceipt.blobUrl}
                   title={previewReceipt.name}
                   className="h-[68vh] w-full rounded-xl border border-[#E5E7EB] bg-white"
                 />
               ) : (
                 <div className="flex items-center justify-center">
                   <img
-                    src={previewReceipt.inlineUrl}
+                    src={previewReceipt.blobUrl}
                     alt={previewReceipt.name}
                     className="max-h-[70vh] w-auto rounded-xl border border-[#E5E7EB] bg-white object-contain shadow-sm"
                   />

@@ -14,13 +14,17 @@ import {
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { BookingStatus, LessonType, MasterFamily, MasterLesson } from '../types.ts';
 import {
+  WORKSHOP_TIMEZONE,
   bookingStatusClasses,
   bookingStatusLabel,
   formatMoney,
+  formatSurgutTime,
+  formatSurgutTimeRange,
   lessonTypeBadgeClasses,
   lessonTypeLabel,
   pluralizeLessons,
   pluralizeYears,
+  toSurgutDateKey,
 } from '../utils/format.ts';
 
 interface ScheduleCalendarViewProps {
@@ -46,53 +50,41 @@ const ALL_FORMATS: ReadonlyArray<{ id: LessonType; short: string; label: string 
   { id: 'birthday', short: 'ДР', label: 'Дни рождения' },
 ];
 
-function toLocalDateKey(dateInput: Date | string): string {
-  const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 function parseDateKey(dateKey: string): Date {
   const [y, m, d] = dateKey.split('-').map(Number);
-  return new Date(y, (m || 1) - 1, d || 1);
+  return new Date(Date.UTC(y || 1970, (m || 1) - 1, d || 1, 7, 0, 0));
 }
 
 function getMondayOfWeek(date: Date): Date {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const offset = (d.getDay() + 6) % 7;
-  d.setDate(d.getDate() - offset);
+  const key = toSurgutDateKey(date);
+  const d = parseDateKey(key);
+  const offset = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - offset);
   return d;
 }
 
-function formatTimeRange(startIso: string, durationMinutes: number): string {
-  const start = new Date(startIso);
-  if (Number.isNaN(start.getTime())) return '—';
-  const end = new Date(start.getTime() + durationMinutes * 60_000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(start.getHours())}:${pad(start.getMinutes())}–${pad(end.getHours())}:${pad(end.getMinutes())}`;
-}
-
-function formatTimeStart(startIso: string): string {
-  const start = new Date(startIso);
-  if (Number.isNaN(start.getTime())) return '—';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(start.getHours())}:${pad(start.getMinutes())}`;
-}
-
 function formatMonthTitleRu(monthDate: Date): string {
-  const raw = monthDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  const raw = monthDate.toLocaleDateString('ru-RU', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: WORKSHOP_TIMEZONE,
+  });
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 function formatWeekRangeTitleRu(weekStart: Date): string {
   const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 6);
-  const startStr = weekStart.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  const startStr = weekStart.toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: WORKSHOP_TIMEZONE,
+  });
   const endStr = weekEnd.toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
+    timeZone: WORKSHOP_TIMEZONE,
   });
   return `${startStr} – ${endStr}`;
 }
@@ -103,6 +95,7 @@ function formatDayHeadingRu(dateKey: string): string {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
+    timeZone: WORKSHOP_TIMEZONE,
   });
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
@@ -132,12 +125,12 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   onCancelLesson,
   onCreateLessonOnDate,
 }) => {
-  const todayKey = useMemo(() => toLocalDateKey(new Date()), []);
+  const todayKey = useMemo(() => toSurgutDateKey(new Date()), []);
   const [calendarMode, setCalendarMode] = useState<CalendarMode>('month');
   const [selectedDateKey, setSelectedDateKey] = useState<string>(todayKey);
   const [viewMonth, setViewMonth] = useState<Date>(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    const today = parseDateKey(toSurgutDateKey(new Date()));
+    return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1, 7, 0, 0));
   });
   const [weekAnchorDate, setWeekAnchorDate] = useState<Date>(() => getMondayOfWeek(new Date()));
 
@@ -167,7 +160,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   const lessonsByDate = useMemo(() => {
     const map = new Map<string, MasterLesson[]>();
     for (const lesson of filteredLessons) {
-      const key = toLocalDateKey(lesson.start_time);
+      const key = toSurgutDateKey(lesson.start_time);
       if (!key) continue;
       const arr = map.get(key) ?? [];
       arr.push(lesson);
@@ -180,11 +173,11 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   }, [filteredLessons]);
 
   const monthCells = useMemo(() => {
-    const year = viewMonth.getFullYear();
-    const month = viewMonth.getMonth();
-    const firstOfMonth = new Date(year, month, 1);
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const startOffset = (firstOfMonth.getDay() + 6) % 7;
+    const year = viewMonth.getUTCFullYear();
+    const month = viewMonth.getUTCMonth();
+    const firstOfMonth = new Date(Date.UTC(year, month, 1, 7, 0, 0));
+    const daysInMonth = new Date(Date.UTC(year, month + 1, 0, 7, 0, 0)).getUTCDate();
+    const startOffset = (firstOfMonth.getUTCDay() + 6) % 7;
     const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
 
     const cells: Array<{
@@ -196,13 +189,16 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
     }> = [];
 
     for (let i = 0; i < totalCells; i++) {
-      const cellDate = new Date(year, month, 1 - startOffset + i);
-      const dayOfWeek = cellDate.getDay();
+      const cellDate = new Date(Date.UTC(year, month, 1 - startOffset + i, 7, 0, 0));
+      const dayOfWeek = cellDate.getUTCDay();
       cells.push({
-        dateKey: toLocalDateKey(cellDate),
-        dayNumber: cellDate.getDate(),
-        monthShort: cellDate.toLocaleDateString('ru-RU', { month: 'short' }),
-        inCurrentMonth: cellDate.getMonth() === month,
+        dateKey: toSurgutDateKey(cellDate),
+        dayNumber: cellDate.getUTCDate(),
+        monthShort: cellDate.toLocaleDateString('ru-RU', {
+          month: 'short',
+          timeZone: WORKSHOP_TIMEZONE,
+        }),
+        inCurrentMonth: cellDate.getUTCMonth() === month,
         isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
       });
     }
@@ -219,13 +215,16 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
     }> = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(weekAnchorDate);
-      d.setDate(d.getDate() + i);
-      const dow = d.getDay();
+      d.setUTCDate(d.getUTCDate() + i);
+      const dow = d.getUTCDay();
       days.push({
-        dateKey: toLocalDateKey(d),
-        dayNumber: d.getDate(),
+        dateKey: toSurgutDateKey(d),
+        dayNumber: d.getUTCDate(),
         weekdayShort: WEEKDAY_LABELS[i],
-        monthShort: d.toLocaleDateString('ru-RU', { month: 'short' }),
+        monthShort: d.toLocaleDateString('ru-RU', {
+          month: 'short',
+          timeZone: WORKSHOP_TIMEZONE,
+        }),
         isWeekend: dow === 0 || dow === 6,
       });
     }
@@ -253,7 +252,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
 
     for (const l of lessons) {
       if (l.is_canceled === 1) continue;
-      const key = toLocalDateKey(l.start_time);
+      const key = toSurgutDateKey(l.start_time);
       if (!visibleKeys.has(key)) continue;
       totalEvents += 1;
       totalMinutes += l.duration_minutes;
@@ -364,33 +363,35 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
     if (mode === 'week') {
       setWeekAnchorDate(getMondayOfWeek(chosen));
     } else {
-      setViewMonth(new Date(chosen.getFullYear(), chosen.getMonth(), 1));
+      setViewMonth(new Date(Date.UTC(chosen.getUTCFullYear(), chosen.getUTCMonth(), 1, 7, 0, 0)));
     }
   };
 
   const handleNavigatePeriod = (delta: number) => {
     if (calendarMode === 'month') {
-      setViewMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+      setViewMonth(
+        (prev) => new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + delta, 1, 7, 0, 0))
+      );
     } else {
       setWeekAnchorDate((prev) => {
         const next = new Date(prev);
-        next.setDate(next.getDate() + delta * 7);
+        next.setUTCDate(next.getUTCDate() + delta * 7);
         return next;
       });
     }
   };
 
   const handleJumpToday = () => {
-    const now = new Date();
-    setViewMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-    setWeekAnchorDate(getMondayOfWeek(now));
+    const today = parseDateKey(todayKey);
+    setViewMonth(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1, 7, 0, 0)));
+    setWeekAnchorDate(getMondayOfWeek(today));
     setSelectedDateKey(todayKey);
   };
 
   const handleDrillIntoDay = (dateKey: string, specificLessonId?: number) => {
     setSelectedDateKey(dateKey);
     const parsed = parseDateKey(dateKey);
-    setViewMonth(new Date(parsed.getFullYear(), parsed.getMonth(), 1));
+    setViewMonth(new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), 1, 7, 0, 0)));
     setWeekAnchorDate(getMondayOfWeek(parsed));
     if (specificLessonId !== undefined) {
       setSelectedLessonId(specificLessonId);
@@ -628,9 +629,9 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                                   ? 'border-slate-200 bg-slate-100 text-[#9CA3AF] line-through'
                                   : lessonTypeBadgeClasses(lesson.lesson_type)
                               }`}
-                              title={`${formatTimeStart(lesson.start_time)} ${lessonTypeLabel(lesson.lesson_type)} — ${lesson.title}`}
+                              title={`${formatSurgutTime(lesson.start_time)} ${lessonTypeLabel(lesson.lesson_type)} — ${lesson.title}`}
                             >
-                              {formatTimeStart(lesson.start_time)} {lesson.title}
+                              {formatSurgutTime(lesson.start_time)} {lesson.title}
                             </div>
                           ))}
                           {list.length > 3 && (
@@ -734,7 +735,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                           >
                             <div className="flex items-center justify-between gap-1">
                               <span className="text-[11px] font-bold text-[#111827] tabular-nums">
-                                {formatTimeStart(lesson.start_time)}
+                                {formatSurgutTime(lesson.start_time)}
                               </span>
                               <span className="text-[10px] font-semibold text-[#6B7280] tabular-nums">
                                 {lesson.booked_count}/{lesson.capacity}
@@ -831,7 +832,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="inline-flex items-center gap-1 text-xs font-bold text-[#111827] tabular-nums">
                           <Clock className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.75} />
-                          {formatTimeRange(lesson.start_time, lesson.duration_minutes)}
+                          {formatSurgutTimeRange(lesson.start_time, lesson.duration_minutes)}
                         </span>
                         <span
                           className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${lessonTypeBadgeClasses(
@@ -907,7 +908,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                       {lessonTypeLabel(selectedLesson.lesson_type)}
                     </span>
                     <span className="font-semibold text-[#111827]">
-                      {formatTimeRange(selectedLesson.start_time, selectedLesson.duration_minutes)}
+                      {formatSurgutTimeRange(selectedLesson.start_time, selectedLesson.duration_minutes)}
                     </span>
                     <span>·</span>
                     <span>{formatMoney(selectedLesson.single_price)}</span>

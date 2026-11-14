@@ -1,3 +1,4 @@
+import net from 'node:net';
 import * as webpushNamespace from 'web-push';
 import { getDb, HttpError, runInTransaction } from '../db.ts';
 
@@ -80,6 +81,69 @@ export function getPushSubscriptionCount(familyId: number): number {
   return row.cnt;
 }
 
+function isPrivateOrDisallowedHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return true;
+
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.home.arpa') ||
+    !host.includes('.') && net.isIP(host) === 0
+  ) {
+    return true;
+  }
+
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) {
+    const parts = host.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
+      return true;
+    }
+    const [a, b] = parts;
+    if (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 192 && b === 0) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      a >= 224
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  if (ipVersion === 6) {
+    if (
+      host === '::' ||
+      host === '::1' ||
+      host.startsWith('fc') ||
+      host.startsWith('fd') ||
+      host.startsWith('fe8') ||
+      host.startsWith('fe9') ||
+      host.startsWith('fea') ||
+      host.startsWith('feb') ||
+      host.startsWith('::ffff:')
+    ) {
+      return true;
+    }
+  }
+
+  // Reject integer/hex/octal obfuscated IPv4 literals (e.g. 2130706433, 0x7f000001)
+  if (/^(0x[0-9a-f]+|0[0-7]+|\d+)$/i.test(host)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function validatePushEndpoint(rawEndpoint: unknown): string {
   if (typeof rawEndpoint !== 'string' || !rawEndpoint.trim() || rawEndpoint.length > 1000) {
     throw new HttpError(400, 'Некорректный адрес push-подписки');
@@ -91,11 +155,14 @@ export function validatePushEndpoint(rawEndpoint: unknown): string {
   } catch {
     throw new HttpError(400, 'Некорректный URL push-подписки');
   }
-  const isLocalDev =
-    parsed.protocol === 'http:' &&
-    (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
-  if (parsed.protocol !== 'https:' && !isLocalDev) {
+  if (parsed.protocol !== 'https:') {
     throw new HttpError(400, 'Push-подписка должна использовать HTTPS-адрес');
+  }
+  if (parsed.username || parsed.password) {
+    throw new HttpError(400, 'URL push-подписки не должен содержать учётные данные');
+  }
+  if (isPrivateOrDisallowedHost(parsed.hostname)) {
+    throw new HttpError(400, 'Указан недопустимый внутренний адрес push-подписки');
   }
   return trimmed;
 }
@@ -201,6 +268,7 @@ export async function sendPushToFamily(
 
 function formatLessonStartRu(isoDate: string): string {
   return new Date(isoDate).toLocaleString('ru-RU', {
+    timeZone: 'Asia/Yekaterinburg',
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
