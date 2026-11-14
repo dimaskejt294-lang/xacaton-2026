@@ -1,0 +1,37 @@
+# Dependencies and build artifacts
+node_modules
+dist
+dev-dist
+server.js
+
+# Git and IDE metadata
+.git
+.gitignore
+.aistudio
+.vscode
+.idea
+
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+
+# SQLite databases and runtime storage
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data
+uploads
+
+# Logs, temporary files, and tests
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tmp
+*.temp
+.DS_Store
+coverage
+tests

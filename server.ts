@@ -59,7 +59,15 @@ async function bootstrap(): Promise<void> {
     }
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
-        res.status(400).json({ error: 'Размер файла чека не должен превышать 5 МБ' });
+        res.status(400).json({
+          error: 'Размер загружаемого файла превышает допустимый лимит (до 5 МБ для чеков, до 8 МБ для документов)',
+        });
+        return;
+      }
+      if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_FIELD_COUNT') {
+        res.status(400).json({
+          error: 'Превышено допустимое количество файлов или полей в запросе',
+        });
         return;
       }
       res.status(400).json({ error: `Ошибка загрузки файла: ${err.message}` });

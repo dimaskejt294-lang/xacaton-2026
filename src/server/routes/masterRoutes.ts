@@ -89,6 +89,8 @@ const receiptUpload = multer({
   }),
   limits: {
     fileSize: 5 * 1024 * 1024, // 5 MB
+    files: 1,
+    fields: 10,
   },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
@@ -159,7 +161,9 @@ const legalUpload = multer({
     },
   }),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10 MB
+    fileSize: 8 * 1024 * 1024, // 8 MB (SonarQube S5693 compliant)
+    files: 1,
+    fields: 10,
   },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
@@ -167,7 +171,7 @@ const legalUpload = multer({
       cb(
         new HttpError(
           400,
-          'Разрешены только файлы PDF, DOCX, TXT, PNG, JPG или WebP размером до 10 МБ'
+          'Разрешены только файлы PDF, DOCX, TXT, PNG, JPG или WebP размером до 8 МБ'
         )
       );
       return;

@@ -10,6 +10,50 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   return outputArray;
 }
 
+function generateSecureCorrelationId(): string {
+  if (typeof window !== 'undefined' && window.crypto) {
+    if (typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error('Web Crypto API недоступен в текущем окружении');
+}
+
+function getEnvVapidPublicKey(): string {
+  const raw = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function isValidVapidPublicKey(key: string): boolean {
+  return /^[A-Za-z0-9_-]{60,120}$/.test(key);
+}
+
+async function resolveVapidPublicKey(token: string): Promise<{ publicKey?: string; error?: string }> {
+  const envKey = getEnvVapidPublicKey();
+  if (envKey) {
+    if (!isValidVapidPublicKey(envKey)) {
+      return { error: 'Некорректный формат VITE_VAPID_PUBLIC_KEY в конфигурации окружения' };
+    }
+    return { publicKey: envKey };
+  }
+
+  const keyRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`, {
+    headers: {
+      'X-Request-Id': generateSecureCorrelationId(),
+    },
+  });
+  const keyBody = (await keyRes.json().catch(() => ({}))) as { publicKey?: string; error?: string };
+  if (!keyRes.ok || !keyBody.publicKey || !isValidVapidPublicKey(keyBody.publicKey)) {
+    return {
+      error: keyBody.error || 'Не удалось получить ключ push-сервера',
+    };
+  }
+  return { publicKey: keyBody.publicKey };
+}
+
 export function isPushSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -67,12 +111,11 @@ export async function subscribeFamilyPush(
       };
     }
 
-    const keyRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`);
-    const keyBody = (await keyRes.json()) as { publicKey?: string; error?: string };
-    if (!keyRes.ok || !keyBody.publicKey) {
+    const { publicKey, error } = await resolveVapidPublicKey(token);
+    if (!publicKey) {
       return {
         ok: false,
-        message: keyBody.error || 'Не удалось получить ключ push-сервера',
+        message: error || 'Не удалось получить ключ push-сервера',
       };
     }
 
@@ -81,14 +124,17 @@ export async function subscribeFamilyPush(
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(keyBody.publicKey),
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
     }
 
     const subJson = subscription.toJSON();
     const subRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/subscribe`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Request-Id': generateSecureCorrelationId(),
+      },
       body: JSON.stringify({
         endpoint: subJson.endpoint,
         keys: subJson.keys,

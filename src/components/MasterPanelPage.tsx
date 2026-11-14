@@ -79,6 +79,16 @@ function writeStoredMasterSession(token: string | null): void {
   }
 }
 
+function isSafeHttpUrl(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false;
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 
 
 export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) => {
@@ -620,12 +630,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   };
 
   const handleCopyLink = async (token: string) => {
-    const fullUrl = `${window.location.origin}/lk/${token}`;
+    const fullUrl = `${window.location.origin}/lk/${encodeURIComponent(token)}`;
     try {
       await navigator.clipboard.writeText(fullUrl);
-      setBanner({ type: 'success', text: `Ссылка скопирована: /lk/${token}` });
+      setBanner({ type: 'success', text: 'Персональная ссылка семьи скопирована в буфер обмена.' });
     } catch {
-      setBanner({ type: 'success', text: `Персональная ссылка: ${fullUrl}` });
+      setBanner({
+        type: 'error',
+        text: 'Не удалось автоматически скопировать ссылку. Проверьте разрешения буфера обмена в браузере.',
+      });
     }
   };
 
@@ -2312,7 +2325,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2">
-                            {p.receipt_url && (
+                            {p.receipt_url && isSafeHttpUrl(p.receipt_url) && (
                               <a
                                 href={p.receipt_url}
                                 target="_blank"
