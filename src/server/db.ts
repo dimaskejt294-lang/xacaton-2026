@@ -78,7 +78,7 @@ function initializeSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS lessons (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
-      lesson_type TEXT NOT NULL CHECK(lesson_type IN ('group', 'individual')),
+      lesson_type TEXT NOT NULL CHECK(lesson_type IN ('group', 'masterclass', 'individual', 'birthday')),
       start_time TEXT NOT NULL,
       duration_minutes INTEGER NOT NULL DEFAULT 90 CHECK(duration_minutes >= 15),
       capacity INTEGER NOT NULL CHECK(capacity >= 1),
@@ -168,7 +168,14 @@ function initializeSchema(db: DatabaseSync): void {
       free_cancel_hours INTEGER NOT NULL DEFAULT 24 CHECK(free_cancel_hours >= 0),
       charge_on_miss INTEGER NOT NULL DEFAULT 1,
       charge_on_late_cancel INTEGER NOT NULL DEFAULT 1,
-      master_password_hash TEXT NOT NULL
+      master_password_hash TEXT NOT NULL,
+      show_hero_age INTEGER NOT NULL DEFAULT 1,
+      hero_age_text TEXT NOT NULL DEFAULT '6–14 лет',
+      show_hero_duration INTEGER NOT NULL DEFAULT 1,
+      hero_duration_text TEXT NOT NULL DEFAULT '90 минут',
+      show_hero_groups INTEGER NOT NULL DEFAULT 1,
+      hero_groups_text TEXT NOT NULL DEFAULT '2–4 места',
+      show_hero_free_cancel INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS reviews (
@@ -183,7 +190,88 @@ function initializeSchema(db: DatabaseSync): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_reviews_published ON reviews(is_published, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS legal_documents (
+      doc_key TEXT PRIMARY KEY CHECK(doc_key IN ('offer', 'personal_data', 'privacy')),
+      title TEXT NOT NULL,
+      file_path TEXT,
+      original_name TEXT,
+      mime_type TEXT,
+      content_text TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_family_id ON push_subscriptions(family_id);
+
+    CREATE TABLE IF NOT EXISTS vapid_config (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      public_key TEXT NOT NULL,
+      private_key TEXT NOT NULL
+    );
   `);
+
+  const paymentCols = db.prepare('PRAGMA table_info(payments)').all() as Array<{ name: string }>;
+  if (!paymentCols.some((c) => c.name === 'consented_at')) {
+    db.exec('ALTER TABLE payments ADD COLUMN consented_at TEXT;');
+  }
+
+  const bookingCols = db.prepare('PRAGMA table_info(bookings)').all() as Array<{ name: string }>;
+  if (!bookingCols.some((c) => c.name === 'reminder_sent_at')) {
+    db.exec('ALTER TABLE bookings ADD COLUMN reminder_sent_at TEXT;');
+  }
+
+  const settingsCols = db.prepare('PRAGMA table_info(workshop_settings)').all() as Array<{
+    name: string;
+  }>;
+  const ensureSettingsCol = (name: string, def: string) => {
+    if (!settingsCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE workshop_settings ADD COLUMN ${name} ${def};`);
+    }
+  };
+  ensureSettingsCol('show_hero_age', 'INTEGER NOT NULL DEFAULT 1');
+  ensureSettingsCol('hero_age_text', "TEXT NOT NULL DEFAULT '6–14 лет'");
+  ensureSettingsCol('show_hero_duration', 'INTEGER NOT NULL DEFAULT 1');
+  ensureSettingsCol('hero_duration_text', "TEXT NOT NULL DEFAULT '90 минут'");
+  ensureSettingsCol('show_hero_groups', 'INTEGER NOT NULL DEFAULT 1');
+  ensureSettingsCol('hero_groups_text', "TEXT NOT NULL DEFAULT '2–4 места'");
+  ensureSettingsCol('show_hero_free_cancel', 'INTEGER NOT NULL DEFAULT 1');
+
+  const lessonsTableSql = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lessons'")
+    .get() as { sql: string } | undefined;
+  if (lessonsTableSql && !lessonsTableSql.sql.includes("'masterclass'")) {
+    db.exec('PRAGMA foreign_keys = OFF;');
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE lessons_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        lesson_type TEXT NOT NULL CHECK(lesson_type IN ('group', 'masterclass', 'individual', 'birthday')),
+        start_time TEXT NOT NULL,
+        duration_minutes INTEGER NOT NULL DEFAULT 90 CHECK(duration_minutes >= 15),
+        capacity INTEGER NOT NULL CHECK(capacity >= 1),
+        single_price REAL NOT NULL CHECK(single_price >= 0),
+        description TEXT,
+        is_canceled INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO lessons_new (id, title, lesson_type, start_time, duration_minutes, capacity, single_price, description, is_canceled)
+      SELECT id, title, lesson_type, start_time, duration_minutes, capacity, single_price, description, is_canceled FROM lessons;
+      DROP TABLE lessons;
+      ALTER TABLE lessons_new RENAME TO lessons;
+      CREATE INDEX IF NOT EXISTS idx_lessons_start_time ON lessons(start_time);
+      COMMIT;
+    `);
+    db.exec('PRAGMA foreign_keys = ON;');
+  }
 }
 
 export function runInTransaction<T>(fn: (db: DatabaseSync) => T): T {

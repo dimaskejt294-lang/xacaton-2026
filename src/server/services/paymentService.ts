@@ -86,6 +86,7 @@ export async function createOnlinePaymentForTariff(params: {
   familyToken: string;
   tariffId: number;
   baseUrl?: string;
+  consentedAt?: string;
 }): Promise<{ paymentId: number; externalPaymentId: string; confirmationUrl: string }> {
   const db = getDb();
   const tariff = db
@@ -102,10 +103,10 @@ export async function createOnlinePaymentForTariff(params: {
   const nowIso = new Date().toISOString();
   const insertResult = db
     .prepare(
-      `INSERT INTO payments (family_id, tariff_id, external_payment_id, amount, lessons_count, payment_method, status, created_at)
-       VALUES (?, ?, NULL, ?, ?, 'yookassa', 'pending', ?)`
+      `INSERT INTO payments (family_id, tariff_id, external_payment_id, amount, lessons_count, payment_method, status, created_at, consented_at)
+       VALUES (?, ?, NULL, ?, ?, 'yookassa', 'pending', ?, ?)`
     )
-    .run(params.familyId, tariff.id, tariff.price, tariff.lessons_count, nowIso);
+    .run(params.familyId, tariff.id, tariff.price, tariff.lessons_count, nowIso, params.consentedAt ?? null);
 
   const localPaymentId = Number(insertResult.lastInsertRowid);
   const origin = (params.baseUrl || config.appUrl).replace(/\/+$/, '');

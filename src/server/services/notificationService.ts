@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { getDb } from '../db.ts';
+import { sendPushToFamily } from './pushService.ts';
 
 export function createNotification(
   familyId: number,
@@ -15,7 +16,23 @@ export function createNotification(
        VALUES (?, ?, ?, 0, ?)`
     )
     .run(familyId, title, message, now);
-  return Number(result.lastInsertRowid);
+  const notificationId = Number(result.lastInsertRowid);
+
+  // Only schedule async Web Push if the family actually has at least one registered device
+  const hasPush = db
+    .prepare('SELECT 1 FROM push_subscriptions WHERE family_id = ? LIMIT 1')
+    .get(familyId);
+  if (hasPush) {
+    setImmediate(() => {
+      void sendPushToFamily(familyId, {
+        title,
+        body: message,
+        tag: `yasna-notif-${notificationId}`,
+      }).catch(() => {});
+    });
+  }
+
+  return notificationId;
 }
 
 export function markNotificationRead(notificationId: number, familyId: number): void {

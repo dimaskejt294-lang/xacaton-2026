@@ -1,6 +1,8 @@
 import {
   AlertCircle,
   Bell,
+  BellOff,
+  BellRing,
   Calendar,
   Check,
   CheckCircle2,
@@ -11,8 +13,11 @@ import {
   Eye,
   FileText,
   History,
+  Lock,
   MessageSquare,
   RefreshCw,
+  ShieldCheck,
+  Smartphone,
   Star,
   User,
   Wallet,
@@ -20,19 +25,33 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ParentDashboardData } from '../types.ts';
+import type { LegalDocumentItem, ParentDashboardData } from '../types.ts';
 import {
   bookingStatusClasses,
   bookingStatusLabel,
   formatDateRu,
   formatDateTimeRu,
   formatMoney,
+  lessonTypeLabel,
   paymentMethodLabel,
   paymentStatusClasses,
   paymentStatusLabel,
   pluralizeLessons,
   pluralizeYears,
 } from '../utils/format.ts';
+import { PWAInstallButton } from './PWAInstallButton.tsx';
+
+function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const buffer = new ArrayBuffer(rawData.length);
+  const outputArray = new Uint8Array(buffer);
+  for (let i = 0; i < rawData.length; i += 1) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 interface ParentCabinetPageProps {
   token: string;
@@ -68,6 +87,38 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
     downloadUrl: string;
     isPdf: boolean;
   } | null>(null);
+  const [selectedTariffId, setSelectedTariffId] = useState<number | null>(null);
+  const [acceptedOffer, setAcceptedOffer] = useState(false);
+  const [acceptedPersonalData, setAcceptedPersonalData] = useState(false);
+  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
+  const [checkoutGroupNotice, setCheckoutGroupNotice] = useState<string | null>(null);
+  const [previewLegalDoc, setPreviewLegalDoc] = useState<LegalDocumentItem | null>(null);
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushSubscribedOnDevice, setPushSubscribedOnDevice] = useState(false);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission>('default');
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const allConsentsChecked = acceptedOffer && acceptedPersonalData && acceptedPrivacy;
+
+  useEffect(() => {
+    const supported =
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      'serviceWorker' in navigator &&
+      'PushManager' in window;
+    setPushSupported(supported);
+    if (!supported) return;
+
+    setPushPermission(Notification.permission);
+    void navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => {
+        setPushSubscribedOnDevice(Boolean(sub));
+      })
+      .catch(() => {
+        setPushSubscribedOnDevice(false);
+      });
+  }, [token]);
 
   const loadCabinet = useCallback(async () => {
     setLoading(true);
@@ -90,6 +141,12 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           return prev;
         }
         return json.children[0]?.id ?? 'all';
+      });
+      setSelectedTariffId((prev) => {
+        if (prev !== null && json.tariffs.some((t) => t.id === prev)) {
+          return prev;
+        }
+        return json.tariffs[0]?.id ?? null;
       });
     } catch {
       setNotFoundError('Не удалось загрузить данные кабинета. Попробуйте обновить страницу.');
@@ -169,7 +226,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
     });
   }, [data, selectedChildId]);
 
-  const handleBookLesson = async (lessonId: number) => {
+  const handleBookLesson = async (lessonId: number, goToPaymentAfter = false) => {
     if (!activeChildIdForAction) return;
     setBanner(null);
     setBusyKey(`book-${lessonId}`);
@@ -190,10 +247,18 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
         return;
       }
       setIsMakeupBooking(false);
-      setBanner({
-        type: 'success',
-        text: `${activeChild?.name ?? 'Ребёнок'} успешно записан(а) на занятие.`,
-      });
+      const chosenLesson = data?.schedule.find((l) => l.id === lessonId);
+      if (goToPaymentAfter && chosenLesson) {
+        setCheckoutGroupNotice(
+          `${activeChild?.name ?? 'Ребёнок'} записан(а) на «${chosenLesson.title}» (${formatDateTimeRu(chosenLesson.start_time)}). Выберите тариф, подтвердите согласия и перейдите к оплате.`
+        );
+        setActiveTab('payments');
+      } else {
+        setBanner({
+          type: 'success',
+          text: `${activeChild?.name ?? 'Ребёнок'} успешно записан(а) на занятие.`,
+        });
+      }
       await loadCabinet();
     } catch {
       setBanner({ type: 'error', text: 'Ошибка сети при записи на занятие' });
@@ -260,12 +325,24 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
 
   const handleStartPayment = async (tariffId: number) => {
     setBanner(null);
+    if (!allConsentsChecked) {
+      setBanner({
+        type: 'error',
+        text: 'Отметьте все три галочки: договор-оферта, обработка персональных данных и политика конфиденциальности.',
+      });
+      return;
+    }
     setBusyKey(`pay-${tariffId}`);
     try {
       const res = await fetch(`/api/lk/${encodeURIComponent(token)}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tariff_id: tariffId }),
+        body: JSON.stringify({
+          tariff_id: tariffId,
+          accepted_offer: acceptedOffer,
+          accepted_personal_data: acceptedPersonalData,
+          accepted_privacy: acceptedPrivacy,
+        }),
       });
       const body = (await res.json()) as {
         payment_id?: number;
@@ -347,6 +424,138 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       method: 'POST',
     });
     await loadCabinet();
+  };
+
+  const handleEnablePush = async () => {
+    setBanner(null);
+    if (!pushSupported) {
+      setBanner({
+        type: 'error',
+        text: 'Этот браузер не поддерживает push-уведомления. На iPhone сначала закрепите сайт на экран «Домой» в Safari и откройте иконку.',
+      });
+      return;
+    }
+
+    setPushBusy(true);
+    try {
+      const permission = await Notification.requestPermission();
+      setPushPermission(permission);
+      if (permission !== 'granted') {
+        setBanner({
+          type: 'error',
+          text: 'Доступ к уведомлениям отклонён в настройках браузера. Разрешите уведомления для «Ясна» и попробуйте снова.',
+        });
+        return;
+      }
+
+      const keyRes = await fetch(
+        `/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`
+      );
+      const keyBody = (await keyRes.json()) as { publicKey?: string; error?: string };
+      if (!keyRes.ok || !keyBody.publicKey) {
+        setBanner({
+          type: 'error',
+          text: keyBody.error || 'Не удалось получить ключ push-сервера',
+        });
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(keyBody.publicKey),
+        });
+      }
+
+      const subJson = subscription.toJSON();
+      const subRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: subJson.endpoint,
+          keys: subJson.keys,
+        }),
+      });
+      if (!subRes.ok) {
+        const errBody = (await subRes.json().catch(() => ({}))) as { error?: string };
+        setBanner({
+          type: 'error',
+          text: errBody.error || 'Не удалось зарегистрировать устройство для уведомлений',
+        });
+        return;
+      }
+
+      setPushSubscribedOnDevice(true);
+      setBanner({
+        type: 'success',
+        text: 'Уведомления на это устройство включены: будут приходить чеки об оплате, подтверждения записи и напоминания перед занятиями.',
+      });
+      await loadCabinet();
+    } catch {
+      setBanner({
+        type: 'error',
+        text: 'Не удалось включить push-уведомления. Убедитесь, что сайт открыт по HTTPS или на экране «Домой».',
+      });
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleDisablePush = async () => {
+    setBanner(null);
+    setPushBusy(true);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        const endpoint = subscription.endpoint;
+        await subscription.unsubscribe();
+        await fetch(`/api/lk/${encodeURIComponent(token)}/push/unsubscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint }),
+        });
+      }
+      setPushSubscribedOnDevice(false);
+      setBanner({
+        type: 'success',
+        text: 'Push-уведомления на этом устройстве отключены.',
+      });
+      await loadCabinet();
+    } catch {
+      setBanner({ type: 'error', text: 'Не удалось отключить уведомления' });
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setBanner(null);
+    setPushBusy(true);
+    try {
+      const res = await fetch(`/api/lk/${encodeURIComponent(token)}/push/test`, {
+        method: 'POST',
+      });
+      const body = (await res.json()) as { sent?: number; error?: string };
+      if (!res.ok) {
+        setBanner({ type: 'error', text: body.error || 'Ошибка отправки тестового уведомления' });
+        return;
+      }
+      setBanner({
+        type: 'success',
+        text:
+          (body.sent ?? 0) > 0
+            ? `Тестовое уведомление отправлено на устройство (${body.sent}).`
+            : 'Уведомление добавлено в кабинет, но активных push-устройств пока нет.',
+      });
+      await loadCabinet();
+    } catch {
+      setBanner({ type: 'error', text: 'Ошибка сети при отправке тестового уведомления' });
+    } finally {
+      setPushBusy(false);
+    }
   };
 
   const handleSubmitReview = async (e: React.FormEvent) => {
@@ -432,19 +641,35 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('notifications')}
-          className="relative inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#F9FAFB]"
-        >
-          <Bell className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
-          <span>Уведомления</span>
-          {data.unread_notifications_count > 0 && (
-            <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#C86D2D] px-1.5 text-xs font-semibold text-white tabular-nums">
-              {data.unread_notifications_count}
-            </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <PWAInstallButton variant="cabinet" />
+
+          {!pushSubscribedOnDevice && (
+            <button
+              type="button"
+              disabled={pushBusy}
+              onClick={() => void handleEnablePush()}
+              className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-[#C86D2D] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#B05B20] disabled:opacity-60"
+            >
+              <BellRing className="h-4 w-4" strokeWidth={1.75} />
+              <span>{pushBusy ? 'Подключение...' : 'Уведомления на телефон'}</span>
+            </button>
           )}
-        </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('notifications')}
+            className="relative inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#F9FAFB]"
+          >
+            <Bell className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
+            <span>Уведомления</span>
+            {data.unread_notifications_count > 0 && (
+              <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#C86D2D] px-1.5 text-xs font-semibold text-white tabular-nums">
+                {data.unread_notifications_count}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Feedback Banner */}
@@ -720,8 +945,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                         <div>
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-medium text-[#6B7280] tabular-nums">
-                              {lesson.lesson_type === 'group' ? 'Групповое' : 'Индивидуальное'} ·{' '}
-                              {lesson.duration_minutes} мин
+                              {lessonTypeLabel(lesson.lesson_type)} · {lesson.duration_minutes} мин
                             </span>
                             <span
                               className={`rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums ${
@@ -777,16 +1001,25 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                                 : 'Встать в лист ожидания'}
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              disabled={busyKey === `book-${lesson.id}`}
-                              onClick={() => void handleBookLesson(lesson.id)}
-                              className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-[#B05B20] active:scale-[0.98] disabled:opacity-60"
-                            >
-                              {busyKey === `book-${lesson.id}`
-                                ? 'Запись...'
-                                : `Записать (${activeChild?.name ?? ''})`}
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={busyKey === `book-${lesson.id}`}
+                                onClick={() =>
+                                  void handleBookLesson(
+                                    lesson.id,
+                                    data.total_remaining_lessons === 0
+                                  )
+                                }
+                                className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-[#B05B20] active:scale-[0.98] disabled:opacity-60"
+                              >
+                                {busyKey === `book-${lesson.id}`
+                                  ? 'Запись...'
+                                  : data.total_remaining_lessons === 0
+                                    ? `Записать и оплатить (${activeChild?.name ?? ''})`
+                                    : `Записать (${activeChild?.name ?? ''})`}
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1027,35 +1260,161 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                   Оплатить абонемент или занятие онлайн
                 </h2>
                 <p className="mt-1 text-sm text-[#6B7280]">
-                  Оплата через ЮKassa: доступна оплата по СБП и банковскими картами.
+                  Шаг 1 — выберите тариф. Шаг 2 — подтвердите оферту, согласие на обработку
+                  персональных данных и политику конфиденциальности, чтобы активировать кнопку
+                  перехода к оплате в ЮKassa.
                 </p>
 
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {data.tariffs.map((tariff) => (
-                    <div
-                      key={tariff.id}
-                      className="flex flex-col justify-between rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
+                {checkoutGroupNotice && (
+                  <div className="mt-3 flex items-start justify-between gap-2 rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-xs font-medium text-[#065F46]">
+                    <span>{checkoutGroupNotice}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCheckoutGroupNotice(null)}
+                      className="cursor-pointer underline"
                     >
-                      <div>
-                        <div className="font-semibold text-[#111827]">{tariff.title}</div>
-                        <div className="mt-1 text-xs text-[#6B7280] tabular-nums">
-                          {pluralizeLessons(tariff.lessons_count)} · срок {tariff.validity_days} дн.
+                      Скрыть
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {data.tariffs.map((tariff) => {
+                    const isSelected = selectedTariffId === tariff.id;
+                    return (
+                      <button
+                        key={tariff.id}
+                        type="button"
+                        onClick={() => setSelectedTariffId(tariff.id)}
+                        className={`flex cursor-pointer flex-col justify-between rounded-xl border p-4 text-left transition-all ${
+                          isSelected
+                            ? 'border-[#C86D2D] bg-[#FDF4ED] ring-2 ring-[#C86D2D]/20'
+                            : 'border-[#E5E7EB] bg-[#F9FAFB] hover:border-[#D1D5DB]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-[#111827]">{tariff.title}</span>
+                            {isSelected && (
+                              <span className="rounded-md bg-[#C86D2D] px-2 py-0.5 text-[10px] font-semibold text-white">
+                                Выбрано
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 text-xs text-[#6B7280] tabular-nums">
+                            {pluralizeLessons(tariff.lessons_count)} · срок {tariff.validity_days} дн.
+                          </div>
                         </div>
                         <div className="mt-3 font-display text-2xl font-bold text-[#111827] tabular-nums">
                           {formatMoney(tariff.price)}
                         </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        disabled={busyKey === `pay-${tariff.id}`}
-                        onClick={() => void handleStartPayment(tariff.id)}
-                        className="mt-4 min-h-[44px] w-full cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-[#B05B20] active:scale-[0.98] disabled:opacity-60"
-                      >
-                        {busyKey === `pay-${tariff.id}` ? 'Создание платежа...' : 'Оплатить онлайн'}
                       </button>
-                    </div>
-                  ))}
+                    );
+                  })}
+                </div>
+
+                {/* Mandatory Legal Checkboxes Gate */}
+                <div className="mt-5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#111827]">
+                    <ShieldCheck className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+                    <span>Обязательные согласия перед оплатой</span>
+                  </div>
+
+                  <div className="mt-3 space-y-2.5 text-xs text-[#374151]">
+                    {(
+                      [
+                        {
+                          key: 'offer' as const,
+                          checked: acceptedOffer,
+                          onChange: setAcceptedOffer,
+                          prefix: 'Я принимаю условия ',
+                          linkLabel: 'Договора-оферты',
+                        },
+                        {
+                          key: 'personal_data' as const,
+                          checked: acceptedPersonalData,
+                          onChange: setAcceptedPersonalData,
+                          prefix: 'Я даю ',
+                          linkLabel: 'Согласие на обработку персональных данных',
+                        },
+                        {
+                          key: 'privacy' as const,
+                          checked: acceptedPrivacy,
+                          onChange: setAcceptedPrivacy,
+                          prefix: 'Я ознакомлен(а) с ',
+                          linkLabel: 'Политикой конфиденциальности',
+                        },
+                      ] as const
+                    ).map((item) => {
+                      const doc = data.legal_documents?.find((d) => d.doc_key === item.key);
+                      return (
+                        <div key={item.key} className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={item.checked}
+                              onChange={(e) => item.onChange(e.target.checked)}
+                              className="h-4 w-4 shrink-0 rounded border-[#D1D5DB] accent-[#C86D2D]"
+                            />
+                            <span>
+                              {item.prefix}
+                              <span className="font-semibold text-[#111827]">{item.linkLabel}</span>
+                            </span>
+                          </label>
+                          {doc && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewLegalDoc(doc)}
+                              className="cursor-pointer font-semibold text-[#C86D2D] underline hover:text-[#B05B20]"
+                            >
+                              Открыть документ
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    {!allConsentsChecked ? (
+                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-[#92400E]">
+                        <Lock className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                        <span>
+                          Отметьте все 3 галочки выше, чтобы ссылка на оплату стала активной
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-[#065F46]">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                        <span>Согласия подтверждены — можно перейти к оплате</span>
+                      </div>
+                    )}
+
+                    {(() => {
+                      const chosenTariff =
+                        data.tariffs.find((t) => t.id === selectedTariffId) ?? data.tariffs[0];
+                      if (!chosenTariff) return null;
+                      const isBusy = busyKey === `pay-${chosenTariff.id}`;
+                      const isLocked = !allConsentsChecked || isBusy;
+                      return (
+                        <button
+                          type="button"
+                          disabled={isLocked}
+                          onClick={() => void handleStartPayment(chosenTariff.id)}
+                          className={`inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold transition-all ${
+                            isLocked
+                              ? 'cursor-not-allowed bg-[#E5E7EB] text-[#9CA3AF]'
+                              : 'cursor-pointer bg-[#C86D2D] text-white shadow-sm hover:bg-[#B05B20] active:scale-[0.98]'
+                          }`}
+                        >
+                          {!allConsentsChecked && <Lock className="h-4 w-4" strokeWidth={1.75} />}
+                          {isBusy
+                            ? 'Создание платежа...'
+                            : `Оплатить ${formatMoney(chosenTariff.price)} (${chosenTariff.title})`}
+                        </button>
+                      );
+                    })()}
+                  </div>
                 </div>
 
                 {pendingCheckout && (
@@ -1145,12 +1504,24 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                           )}
 
                           {payment.status === 'pending' && payment.confirmation_url && (
-                            <a
-                              href={payment.confirmation_url}
-                              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3.5 text-xs font-medium text-white hover:bg-[#B05B20]"
-                            >
-                              Завершить оплату
-                            </a>
+                            allConsentsChecked ? (
+                              <a
+                                href={payment.confirmation_url}
+                                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3.5 text-xs font-medium text-white hover:bg-[#B05B20]"
+                              >
+                                Завершить оплату
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled
+                                title="Отметьте все 3 согласия выше, чтобы активировать оплату"
+                                className="inline-flex min-h-[44px] cursor-not-allowed items-center gap-1.5 rounded-xl bg-[#E5E7EB] px-3.5 text-xs font-medium text-[#9CA3AF]"
+                              >
+                                <Lock className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                Завершить оплату
+                              </button>
+                            )
                           )}
 
                           {payment.receipt_url && (
@@ -1212,6 +1583,59 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Legal Documents Card in Parent Cabinet */}
+              {data.legal_documents && data.legal_documents.length > 0 && (
+                <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+                    <h3 className="font-display text-base font-semibold text-[#111827]">
+                      Оферта, обработка персональных данных и политика конфиденциальности
+                    </h3>
+                  </div>
+                  <p className="mt-1 text-xs text-[#6B7280]">
+                    Вы можете в любой момент открыть или скачать актуальные документы мастерской
+                    «Ясна».
+                  </p>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {data.legal_documents.map((doc) => (
+                      <div
+                        key={doc.doc_key}
+                        className="flex flex-col justify-between rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3.5"
+                      >
+                        <div>
+                          <div className="text-sm font-semibold text-[#111827]">{doc.title}</div>
+                          <div className="mt-1 text-[11px] text-[#6B7280]">
+                            {doc.has_file === 1 && doc.original_name
+                              ? `Файл: ${doc.original_name}`
+                              : 'Текстовая редакция'}
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewLegalDoc(doc)}
+                            className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                          >
+                            <Eye className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
+                            Открыть
+                          </button>
+                          <a
+                            href={`/api/public/legal/${doc.doc_key}/file`}
+                            download={doc.original_name || `${doc.doc_key}.txt`}
+                            className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                          >
+                            <Download className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
+                            Скачать
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -1222,22 +1646,101 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.16 }}
-              className="rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+              className="space-y-5"
             >
-              <div className="flex items-center justify-between border-b border-[#E5E7EB] px-5 py-4">
-                <h2 className="font-display text-base font-semibold text-[#111827]">
-                  Уведомления в кабинете
-                </h2>
-                {data.unread_notifications_count > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => void handleMarkAllRead()}
-                    className="min-h-[40px] cursor-pointer text-xs font-semibold text-[#C86D2D] hover:text-[#B05B20]"
+              {/* PWA Home Screen & Phone Web Push Card */}
+              <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Smartphone className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+                      <h2 className="font-display text-base font-semibold text-[#111827]">
+                        Уведомления на телефон и иконка на экране
+                      </h2>
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-[#6B7280]">
+                      Закрепите личный кабинет на рабочем столе и включите push-уведомления:
+                      будут приходить чеки об оплате, подтверждения записи, отметки посещаемости
+                      (был/пропустил) и напоминание за 24 часа до занятия.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <PWAInstallButton variant="cabinet" />
+                    {pushSubscribedOnDevice ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={pushBusy}
+                          onClick={() => void handleTestPush()}
+                          className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3.5 text-xs font-semibold text-white hover:bg-[#B05B20] disabled:opacity-60"
+                        >
+                          <BellRing className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Проверить push
+                        </button>
+                        <button
+                          type="button"
+                          disabled={pushBusy}
+                          onClick={() => void handleDisablePush()}
+                          className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#6B7280] hover:bg-[#F9FAFB]"
+                        >
+                          <BellOff className="h-3.5 w-3.5" strokeWidth={1.5} />
+                          Отключить
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={pushBusy}
+                        onClick={() => void handleEnablePush()}
+                        className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-4 text-xs font-semibold text-white hover:bg-[#B05B20] disabled:opacity-60"
+                      >
+                        <BellRing className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        {pushBusy ? 'Подключение...' : 'Включить уведомления'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[#F3F4F6] pt-3 text-xs text-[#6B7280]">
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold ${
+                      pushSubscribedOnDevice
+                        ? 'bg-[#ECFDF5] text-[#065F46]'
+                        : 'bg-[#F3F4F6] text-[#6B7280]'
+                    }`}
                   >
-                    Отметить все прочитанными
-                  </button>
-                )}
+                    {pushSubscribedOnDevice
+                      ? 'Это устройство подключено'
+                      : pushPermission === 'denied'
+                        ? 'Уведомления заблокированы в браузере'
+                        : 'Это устройство ещё не подключено'}
+                  </span>
+                  <span className="tabular-nums">
+                    Активных устройств семьи: {data.push_subscription_count ?? 0}
+                  </span>
+                  <span>
+                    На iPhone/iPad: сначала «Поделиться → На экран „Домой“», затем включите
+                    уведомления.
+                  </span>
+                </div>
               </div>
+
+              <div className="rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+                <div className="flex items-center justify-between border-b border-[#E5E7EB] px-5 py-4">
+                  <h2 className="font-display text-base font-semibold text-[#111827]">
+                    История уведомлений в кабинете
+                  </h2>
+                  {data.unread_notifications_count > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleMarkAllRead()}
+                      className="min-h-[40px] cursor-pointer text-xs font-semibold text-[#C86D2D] hover:text-[#B05B20]"
+                    >
+                      Отметить все прочитанными
+                    </button>
+                  )}
+                </div>
 
               {data.notifications.length === 0 ? (
                 <div className="p-8 text-center text-sm text-[#6B7280]">Уведомлений пока нет.</div>
@@ -1278,6 +1781,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                   ))}
                 </div>
               )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1342,6 +1846,78 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                     alt={previewReceipt.name}
                     className="max-h-[70vh] w-auto rounded-xl border border-[#E5E7EB] bg-white object-contain shadow-sm"
                   />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Legal Document Viewer Modal */}
+      {previewLegalDoc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={previewLegalDoc.title}
+        >
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-5 py-3.5">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-[#6B7280]">Документ мастерской «Ясна»</div>
+                <div className="truncate font-display text-sm font-semibold text-[#111827]">
+                  {previewLegalDoc.title}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <a
+                  href={`/api/public/legal/${previewLegalDoc.doc_key}/file`}
+                  download={previewLegalDoc.original_name || `${previewLegalDoc.doc_key}.txt`}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]"
+                >
+                  <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Скачать
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewLegalDoc(null)}
+                  aria-label="Закрыть документ"
+                  className="inline-flex min-h-[40px] min-w-[40px] cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#111827]"
+                >
+                  <X className="h-4 w-4" strokeWidth={1.5} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto bg-[#F9FAFB] p-5">
+              {previewLegalDoc.has_file === 1 &&
+              previewLegalDoc.mime_type === 'application/pdf' ? (
+                <iframe
+                  src={`/api/public/legal/${previewLegalDoc.doc_key}/file?inline=1`}
+                  title={previewLegalDoc.title}
+                  className="h-[68vh] w-full rounded-xl border border-[#E5E7EB] bg-white"
+                />
+              ) : previewLegalDoc.has_file === 1 &&
+                previewLegalDoc.mime_type?.startsWith('image/') ? (
+                <div className="flex items-center justify-center">
+                  <img
+                    src={`/api/public/legal/${previewLegalDoc.doc_key}/file?inline=1`}
+                    alt={previewLegalDoc.title}
+                    className="max-h-[70vh] w-auto rounded-xl border border-[#E5E7EB] bg-white object-contain shadow-sm"
+                  />
+                </div>
+              ) : previewLegalDoc.has_file === 1 &&
+                previewLegalDoc.mime_type !== 'text/plain' ? (
+                <div className="rounded-xl border border-[#E5E7EB] bg-white p-6 text-center text-sm text-[#374151]">
+                  <p>
+                    Загружен файл: <strong>{previewLegalDoc.original_name}</strong>.
+                  </p>
+                  <p className="mt-1 text-xs text-[#6B7280]">
+                    Нажмите «Скачать» выше, чтобы открыть файл на вашем устройстве.
+                  </p>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap rounded-xl border border-[#E5E7EB] bg-white p-5 text-sm leading-relaxed text-[#111827]">
+                  {previewLegalDoc.content_text}
                 </div>
               )}
             </div>

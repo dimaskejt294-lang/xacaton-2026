@@ -1,11 +1,23 @@
 import { MotionConfig } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
 import { MasterPanelPage } from './components/MasterPanelPage.tsx';
+import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { ParentCabinetPage } from './components/ParentCabinetPage.tsx';
 import { PublicSchedulePage } from './components/PublicSchedulePage.tsx';
 import { TopNav, type ActiveView } from './components/TopNav.tsx';
 
 const STORAGE_KEY_FAMILY_TOKEN = 'yasna_active_family_token';
+
+function readSavedToken(): string | null {
+  try {
+    return (
+      localStorage.getItem(STORAGE_KEY_FAMILY_TOKEN) ||
+      sessionStorage.getItem(STORAGE_KEY_FAMILY_TOKEN)
+    );
+  } catch {
+    return null;
+  }
+}
 
 function parseRoute(pathname: string): {
   view: ActiveView;
@@ -22,13 +34,21 @@ function parseRoute(pathname: string): {
 }
 
 export default function App() {
-  const [pathname, setPathname] = useState<string>(() => window.location.pathname);
-  const [savedFamilyToken, setSavedFamilyToken] = useState<string | null>(() => {
-    try {
-      return sessionStorage.getItem(STORAGE_KEY_FAMILY_TOKEN);
-    } catch {
-      return null;
+  const [savedFamilyToken, setSavedFamilyToken] = useState<string | null>(readSavedToken);
+  const [pathname, setPathname] = useState<string>(() => {
+    const initialPath = window.location.pathname;
+    if (initialPath === '/') {
+      const token = readSavedToken();
+      const isStandalone =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        (window.navigator as { standalone?: boolean }).standalone === true;
+      if (isStandalone && token) {
+        const lkPath = `/lk/${encodeURIComponent(token)}`;
+        window.history.replaceState({}, '', lkPath);
+        return lkPath;
+      }
     }
+    return initialPath;
   });
 
   useEffect(() => {
@@ -50,6 +70,7 @@ export default function App() {
   const handleTokenValid = useCallback((token: string) => {
     setSavedFamilyToken(token);
     try {
+      localStorage.setItem(STORAGE_KEY_FAMILY_TOKEN, token);
       sessionStorage.setItem(STORAGE_KEY_FAMILY_TOKEN, token);
     } catch {
       // Ignore storage access restrictions
@@ -85,6 +106,8 @@ export default function App() {
 
           {route.view === 'master' && <MasterPanelPage onNavigate={navigate} />}
         </main>
+
+        <OfflineIndicator />
       </div>
     </MotionConfig>
   );

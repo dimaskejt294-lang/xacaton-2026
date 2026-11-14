@@ -1,4 +1,34 @@
-import type { BookingStatus, PaymentMethod, PaymentStatus } from '../types.ts';
+import type { BookingStatus, LessonType, PaymentMethod, PaymentStatus } from '../types.ts';
+
+export function lessonTypeLabel(lessonType: LessonType | string): string {
+  switch (lessonType) {
+    case 'group':
+      return 'Группа';
+    case 'masterclass':
+      return 'Мастер-класс';
+    case 'individual':
+      return 'Индивидуальное';
+    case 'birthday':
+      return 'День рождения';
+    default:
+      return 'Занятие';
+  }
+}
+
+export function lessonTypeBadgeClasses(lessonType: LessonType | string): string {
+  switch (lessonType) {
+    case 'group':
+      return 'border-[#A7F3D0] bg-[#ECFDF5] text-[#065F46]';
+    case 'masterclass':
+      return 'border-[#F6D5B8] bg-[#FDF4ED] text-[#C86D2D]';
+    case 'individual':
+      return 'border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3]';
+    case 'birthday':
+      return 'border-[#FDE68A] bg-[#FFFBEB] text-[#92400E]';
+    default:
+      return 'border-[#E5E7EB] bg-[#F3F4F6] text-[#374151]';
+  }
+}
 
 export function formatMoney(amount: number): string {
   return `${new Intl.NumberFormat('ru-RU', {

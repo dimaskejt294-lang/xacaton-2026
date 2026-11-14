@@ -16,8 +16,8 @@ import { motion } from 'motion/react';
 import React, { useEffect, useState } from 'react';
 import craftFormatsImg from '../assets/images/yasna_craft_formats_1794650010759.jpg';
 import workshopHeroImg from '../assets/images/yasna_workshop_hero_1794650010140.jpg';
-import type { PublicLesson, ReviewItem, Tariff, WorkshopSettings } from '../types.ts';
-import { formatDateRu, formatDateTimeRu, formatMoney, pluralizeLessons } from '../utils/format.ts';
+import type { LessonType, PublicLesson, ReviewItem, Tariff, WorkshopSettings } from '../types.ts';
+import { formatDateRu, formatDateTimeRu, formatMoney, lessonTypeLabel, pluralizeLessons } from '../utils/format.ts';
 
 interface PublicSchedulePageProps {
   onNavigate: (path: string) => void;
@@ -38,7 +38,7 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
   const [data, setData] = useState<PublicScheduleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filterType, setFilterType] = useState<'all' | 'group' | 'individual'>('all');
+  const [filterType, setFilterType] = useState<'all' | LessonType>('all');
 
   const [linkInput, setLinkInput] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -138,27 +138,59 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
               и получайте чеки без переписок.
             </p>
 
-            {/* Concrete 4-fact grid */}
-            <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-3">
-                <div className="text-xs text-[#6B7280]">Возраст</div>
-                <div className="mt-1 font-semibold text-[#111827] tabular-nums">6–14 лет</div>
-              </div>
-              <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-3">
-                <div className="text-xs text-[#6B7280]">Длительность</div>
-                <div className="mt-1 font-semibold text-[#111827] tabular-nums">90 минут</div>
-              </div>
-              <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-3">
-                <div className="text-xs text-[#6B7280]">Группы</div>
-                <div className="mt-1 font-semibold text-[#111827] tabular-nums">2–4 места</div>
-              </div>
-              <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-3">
-                <div className="text-xs text-[#6B7280]">Отмена без списания</div>
-                <div className="mt-1 font-semibold text-[#111827] tabular-nums">
-                  за {data?.settings?.free_cancel_hours ?? 24} ч
+            {/* Concrete configurable fact grid */}
+            {(() => {
+              const s = data?.settings;
+              const factCards: Array<{ label: string; value: string }> = [];
+              if ((s?.show_hero_age ?? 1) === 1) {
+                factCards.push({
+                  label: 'Возраст',
+                  value: s?.hero_age_text || '6–14 лет',
+                });
+              }
+              if ((s?.show_hero_duration ?? 1) === 1) {
+                factCards.push({
+                  label: 'Длительность',
+                  value: s?.hero_duration_text || '90 минут',
+                });
+              }
+              if ((s?.show_hero_groups ?? 1) === 1) {
+                factCards.push({
+                  label: 'Группы',
+                  value: s?.hero_groups_text || '2–4 места',
+                });
+              }
+              if ((s?.show_hero_free_cancel ?? 1) === 1) {
+                factCards.push({
+                  label: 'Отмена без списания',
+                  value: `за ${s?.free_cancel_hours ?? 24} ч`,
+                });
+              }
+              if (factCards.length === 0) return null;
+              const colsClass =
+                factCards.length === 1
+                  ? 'grid-cols-1 sm:max-w-xs'
+                  : factCards.length === 2
+                  ? 'grid-cols-2'
+                  : factCards.length === 3
+                  ? 'grid-cols-1 sm:grid-cols-3'
+                  : 'grid-cols-2 sm:grid-cols-4';
+              return (
+                <div className={`mt-6 grid gap-3 ${colsClass}`}>
+                  {factCards.map((card) => (
+                    <div
+                      key={card.label}
+                      className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-3"
+                    >
+                      <div className="text-xs text-[#6B7280]">{card.label}</div>
+                      <div className="mt-1 font-semibold text-[#111827] tabular-nums">
+                        {card.value}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            </div>
+              );
+            })()}
           </div>
 
           {/* Parent Personal Link Access Box */}
@@ -376,12 +408,14 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
           </div>
 
           {/* Filter tabs */}
-          <div className="inline-flex rounded-xl border border-[#E5E7EB] bg-white p-1">
+          <div className="flex flex-wrap gap-1 rounded-xl border border-[#E5E7EB] bg-white p-1">
             {(
               [
                 { id: 'all', label: 'Все' },
-                { id: 'group', label: 'Групповые' },
+                { id: 'group', label: 'Группы' },
+                { id: 'masterclass', label: 'Мастер-классы' },
                 { id: 'individual', label: 'Индивидуальные' },
+                { id: 'birthday', label: 'Дни рождения' },
               ] as const
             ).map((tab) => (
               <button
@@ -462,9 +496,7 @@ export const PublicSchedulePage: React.FC<PublicSchedulePageProps> = ({
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2 text-xs font-medium text-[#6B7280]">
-                        <span>
-                          {lesson.lesson_type === 'group' ? 'Групповое' : 'Индивидуальное'}
-                        </span>
+                        <span>{lessonTypeLabel(lesson.lesson_type)}</span>
                         <span aria-hidden="true">·</span>
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <Clock className="h-3.5 w-3.5" strokeWidth={1.5} />

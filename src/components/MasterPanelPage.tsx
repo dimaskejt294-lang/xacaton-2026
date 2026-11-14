@@ -11,13 +11,16 @@ import {
   EyeOff,
   FileSpreadsheet,
   FileText,
+  Grid3x3,
   History,
+  List,
   Lock,
   LogOut,
   Pencil,
   Plus,
   RefreshCw,
   Settings,
+  ShieldCheck,
   Star,
   Ticket,
   Trash2,
@@ -27,25 +30,28 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useCallback, useEffect, useState } from 'react';
-import type { BookingStatus, MasterDashboardData, MasterLesson } from '../types.ts';
+import type { BookingStatus, LegalDocKey, LessonType, MasterDashboardData, MasterLesson } from '../types.ts';
 import {
   bookingStatusClasses,
   bookingStatusLabel,
   formatDateRu,
   formatDateTimeRu,
   formatMoney,
+  lessonTypeLabel,
   paymentMethodLabel,
   paymentStatusClasses,
   paymentStatusLabel,
   pluralizeLessons,
   pluralizeYears,
 } from '../utils/format.ts';
+import { ScheduleCalendarView } from './ScheduleCalendarView.tsx';
+import { SchoolJournalGrid } from './SchoolJournalGrid.tsx';
 
 interface MasterPanelPageProps {
   onNavigate: (path: string) => void;
 }
 
-type MasterTab = 'schedule' | 'families' | 'payments' | 'settings';
+type MasterTab = 'schedule' | 'grid' | 'families' | 'payments' | 'settings';
 
 const MASTER_SESSION_STORAGE_KEY = 'yasna_master_session_token';
 
@@ -95,13 +101,14 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [data, setData] = useState<MasterDashboardData | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<MasterTab>('schedule');
+  const [scheduleViewMode, setScheduleViewMode] = useState<'calendar' | 'list'>('calendar');
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Create / edit lesson state
   const [showNewLesson, setShowNewLesson] = useState(false);
   const [editingLessonId, setEditingLessonId] = useState<number | null>(null);
   const [lessonTitle, setLessonTitle] = useState('');
-  const [lessonType, setLessonType] = useState<'group' | 'individual'>('group');
+  const [lessonType, setLessonType] = useState<LessonType>('group');
   const [lessonStart, setLessonStart] = useState(defaultTomorrowDatetimeLocal);
   const [lessonDuration, setLessonDuration] = useState(90);
   const [lessonCapacity, setLessonCapacity] = useState(2);
@@ -152,7 +159,17 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [freeCancelHours, setFreeCancelHours] = useState(24);
   const [chargeOnMiss, setChargeOnMiss] = useState(true);
   const [chargeOnLateCancel, setChargeOnLateCancel] = useState(true);
+  const [showHeroAge, setShowHeroAge] = useState(true);
+  const [heroAgeText, setHeroAgeText] = useState('6–14 лет');
+  const [showHeroDuration, setShowHeroDuration] = useState(true);
+  const [heroDurationText, setHeroDurationText] = useState('90 минут');
+  const [showHeroGroups, setShowHeroGroups] = useState(true);
+  const [heroGroupsText, setHeroGroupsText] = useState('2–4 места');
+  const [showHeroFreeCancel, setShowHeroFreeCancel] = useState(true);
   const [csvImportText, setCsvImportText] = useState('');
+  const [editingLegalKey, setEditingLegalKey] = useState<LegalDocKey | null>(null);
+  const [legalTitleInput, setLegalTitleInput] = useState('');
+  const [legalTextInput, setLegalTextInput] = useState('');
 
   // Password change state
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
@@ -197,6 +214,13 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       setFreeCancelHours(json.settings.free_cancel_hours);
       setChargeOnMiss(json.settings.charge_on_miss === 1);
       setChargeOnLateCancel(json.settings.charge_on_late_cancel === 1);
+      setShowHeroAge((json.settings.show_hero_age ?? 1) === 1);
+      setHeroAgeText(json.settings.hero_age_text || '6–14 лет');
+      setShowHeroDuration((json.settings.show_hero_duration ?? 1) === 1);
+      setHeroDurationText(json.settings.hero_duration_text || '90 минут');
+      setShowHeroGroups((json.settings.show_hero_groups ?? 1) === 1);
+      setHeroGroupsText(json.settings.hero_groups_text || '2–4 места');
+      setShowHeroFreeCancel((json.settings.show_hero_free_cancel ?? 1) === 1);
 
       if (json.families.length > 0 && !payFamilyId) {
         setPayFamilyId(String(json.families[0].id));
@@ -297,6 +321,14 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const startCreateLessonOnDate = (dateKey: string) => {
+    setBanner(null);
+    resetLessonForm();
+    setLessonStart(`${dateKey}T15:00`);
+    setShowNewLesson(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     setBanner(null);
@@ -345,12 +377,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     await loadDashboard();
   };
 
-  const handleMasterEnroll = async (lessonId: number) => {
-    const childId = Number(enrollChildMap[lessonId]);
-    if (!childId) {
-      setBanner({ type: 'error', text: 'Выберите ребёнка для записи' });
-      return;
-    }
+  const handleEnrollChildByIds = async (lessonId: number, childId: number) => {
     setBanner(null);
     const res = await masterFetch('/api/master/bookings', {
       method: 'POST',
@@ -366,9 +393,22 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     await loadDashboard();
   };
 
-  const handleMarkStatus = async (bookingId: number, status: BookingStatus) => {
+  const handleMasterEnroll = async (lessonId: number) => {
+    const childId = Number(enrollChildMap[lessonId]);
+    if (!childId) {
+      setBanner({ type: 'error', text: 'Выберите ребёнка для записи' });
+      return;
+    }
+    await handleEnrollChildByIds(lessonId, childId);
+  };
+
+  const handleMarkStatus = async (
+    bookingId: number,
+    status: BookingStatus,
+    explicitReason?: string
+  ) => {
     setBanner(null);
-    const reason = reasonMap[bookingId]?.trim();
+    const reason = (explicitReason ?? reasonMap[bookingId])?.trim();
     const res = await masterFetch(`/api/master/bookings/${bookingId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -652,6 +692,13 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         free_cancel_hours: freeCancelHours,
         charge_on_miss: chargeOnMiss,
         charge_on_late_cancel: chargeOnLateCancel,
+        show_hero_age: showHeroAge,
+        hero_age_text: heroAgeText,
+        show_hero_duration: showHeroDuration,
+        hero_duration_text: heroDurationText,
+        show_hero_groups: showHeroGroups,
+        hero_groups_text: heroGroupsText,
+        show_hero_free_cancel: showHeroFreeCancel,
       }),
     });
     const body = (await res.json()) as { error?: string };
@@ -659,7 +706,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       setBanner({ type: 'error', text: body.error || 'Не удалось сохранить настройки' });
       return;
     }
-    setBanner({ type: 'success', text: 'Правила отмен и списаний обновлены.' });
+    setBanner({ type: 'success', text: 'Настройки мастерской и карточки на главной обновлены.' });
     await loadDashboard();
   };
 
@@ -762,6 +809,54 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     } finally {
       setChangingPassword(false);
     }
+  };
+
+  const handleUploadLegalFile = async (docKey: LegalDocKey, file: File | undefined) => {
+    if (!file) return;
+    setBanner(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await masterFetch(`/api/master/legal-documents/${docKey}/file`, {
+      method: 'POST',
+      body: formData,
+    });
+    const body = (await res.json()) as { error?: string };
+    if (!res.ok) {
+      setBanner({ type: 'error', text: body.error || 'Не удалось загрузить файл документа' });
+      return;
+    }
+    setBanner({ type: 'success', text: 'Файл документа загружен и доступен родителям в ЛК.' });
+    await loadDashboard();
+  };
+
+  const handleDeleteLegalFile = async (docKey: LegalDocKey) => {
+    setBanner(null);
+    const res = await masterFetch(`/api/master/legal-documents/${docKey}/file`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      setBanner({ type: 'error', text: 'Не удалось удалить файл документа' });
+      return;
+    }
+    setBanner({ type: 'success', text: 'Загруженный файл удалён, используется текстовая версия.' });
+    await loadDashboard();
+  };
+
+  const handleSaveLegalText = async (docKey: LegalDocKey) => {
+    setBanner(null);
+    const res = await masterFetch(`/api/master/legal-documents/${docKey}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: legalTitleInput, content_text: legalTextInput }),
+    });
+    const body = (await res.json()) as { error?: string };
+    if (!res.ok) {
+      setBanner({ type: 'error', text: body.error || 'Не удалось сохранить текст документа' });
+      return;
+    }
+    setEditingLegalKey(null);
+    setBanner({ type: 'success', text: 'Текст документа обновлён.' });
+    await loadDashboard();
   };
 
   if (authenticated === null) {
@@ -929,6 +1024,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         {(
           [
             { id: 'schedule', label: 'Расписание и журнал', icon: Calendar },
+            { id: 'grid', label: 'Журнал (клеточки)', icon: Grid3x3 },
             { id: 'families', label: 'Семьи и абонементы', icon: Users },
             { id: 'payments', label: 'Оплаты и чеки', icon: FileText },
             { id: 'settings', label: 'Правила и выгрузка', icon: Settings },
@@ -974,22 +1070,51 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                     <h2 className="font-display text-lg font-semibold text-[#111827]">
                       Занятия и отметки посещаемости
                     </h2>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (showNewLesson) {
-                          setShowNewLesson(false);
-                          resetLessonForm();
-                        } else {
-                          resetLessonForm();
-                          setShowNewLesson(true);
-                        }
-                      }}
-                      className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm hover:bg-[#B05B20]"
-                    >
-                      <Plus className="h-4 w-4" strokeWidth={1.5} />
-                      {showNewLesson ? 'Скрыть форму' : 'Новое занятие'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="inline-flex rounded-xl border border-[#E5E7EB] bg-white p-1">
+                        <button
+                          type="button"
+                          onClick={() => setScheduleViewMode('calendar')}
+                          className={`inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors ${
+                            scheduleViewMode === 'calendar'
+                              ? 'bg-[#C86D2D] text-white shadow-xs'
+                              : 'text-[#6B7280] hover:text-[#111827]'
+                          }`}
+                        >
+                          <Calendar className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Календарь
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScheduleViewMode('list')}
+                          className={`inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors ${
+                            scheduleViewMode === 'list'
+                              ? 'bg-[#C86D2D] text-white shadow-xs'
+                              : 'text-[#6B7280] hover:text-[#111827]'
+                          }`}
+                        >
+                          <List className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Список
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (showNewLesson) {
+                            setShowNewLesson(false);
+                            resetLessonForm();
+                          } else {
+                            resetLessonForm();
+                            setShowNewLesson(true);
+                          }
+                        }}
+                        className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm hover:bg-[#B05B20]"
+                      >
+                        <Plus className="h-4 w-4" strokeWidth={1.5} />
+                        {showNewLesson ? 'Скрыть форму' : 'Новое занятие'}
+                      </button>
+                    </div>
                   </div>
 
                   {showNewLesson && (
@@ -1023,15 +1148,26 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           <select
                             value={lessonType}
                             onChange={(e) => {
-                              const nextType =
-                                e.target.value === 'individual' ? 'individual' : 'group';
+                              const val = e.target.value;
+                              const nextType: LessonType =
+                                val === 'masterclass' || val === 'individual' || val === 'birthday'
+                                  ? val
+                                  : 'group';
                               setLessonType(nextType);
-                              if (nextType === 'individual') setLessonCapacity(1);
+                              if (nextType === 'individual') {
+                                setLessonCapacity(1);
+                              } else if (editingLessonId === null) {
+                                if (nextType === 'birthday') setLessonCapacity(8);
+                                else if (nextType === 'masterclass') setLessonCapacity(6);
+                                else setLessonCapacity(4);
+                              }
                             }}
                             className="mt-1 min-h-[44px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
                           >
-                            <option value="group">Групповое</option>
+                            <option value="group">Группа</option>
+                            <option value="masterclass">Мастер-класс</option>
                             <option value="individual">Индивидуальное</option>
+                            <option value="birthday">День рождения</option>
                           </select>
                         </div>
                         <div>
@@ -1124,9 +1260,21 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                     </form>
                   )}
 
-                  {/* Lessons List */}
-                  <div className="space-y-4">
-                    {data.lessons.map((lesson) => {
+                  {/* Calendar or Flat List */}
+                  {scheduleViewMode === 'calendar' ? (
+                    <ScheduleCalendarView
+                      lessons={data.lessons}
+                      families={data.families}
+                      onMarkStatus={handleMarkStatus}
+                      onEnrollChild={handleEnrollChildByIds}
+                      onConvertWaitlist={handleConvertWaitlist}
+                      onEditLesson={startEditLesson}
+                      onCancelLesson={handleCancelLesson}
+                      onCreateLessonOnDate={startCreateLessonOnDate}
+                    />
+                  ) : (
+                    <div className="space-y-4">
+                      {data.lessons.map((lesson) => {
                       const isFull = lesson.free_spots === 0;
                       return (
                         <div
@@ -1138,11 +1286,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           <div className="flex flex-col justify-between gap-3 border-b border-[#F3F4F6] pb-4 sm:flex-row sm:items-center">
                             <div>
                               <div className="flex flex-wrap items-center gap-2 text-xs text-[#6B7280] tabular-nums">
-                                <span>
-                                  {lesson.lesson_type === 'group'
-                                    ? 'Групповое'
-                                    : 'Индивидуальное'}
-                                </span>
+                                <span>{lessonTypeLabel(lesson.lesson_type)}</span>
                                 <span aria-hidden="true">·</span>
                                 <span>{formatDateTimeRu(lesson.start_time)}</span>
                                 <span aria-hidden="true">·</span>
@@ -1357,7 +1501,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                         </div>
                       );
                     })}
-                  </div>
+                    </div>
+                  )}
 
                   {/* Attendance History Log */}
                   <div className="rounded-2xl border border-[#E5E7EB] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
@@ -1397,6 +1542,24 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       </div>
                     )}
                   </div>
+                </motion.div>
+              )}
+
+              {/* TAB: SCHOOL ATTENDANCE GRID */}
+              {activeTab === 'grid' && (
+                <motion.div
+                  key="m-grid"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16 }}
+                >
+                  <SchoolJournalGrid
+                    lessons={data.lessons}
+                    families={data.families}
+                    onMarkStatus={handleMarkStatus}
+                    onEnrollChild={handleEnrollChildByIds}
+                  />
                 </motion.div>
               )}
 
@@ -2187,11 +2350,103 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                         <span>Списывать занятие при поздней отмене родителем</span>
                       </label>
 
+                      <div className="border-t border-[#F3F4F6] pt-4">
+                        <div className="text-sm font-semibold text-[#111827]">
+                          Карточки на главной странице
+                        </div>
+                        <p className="mt-0.5 text-xs text-[#6B7280]">
+                          Любую карточку можно отключить или изменить её текст.
+                        </p>
+
+                        <div className="mt-3 space-y-3">
+                          <div className="flex flex-col gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <label className="inline-flex cursor-pointer items-center gap-2.5 text-sm font-medium text-[#111827]">
+                              <input
+                                type="checkbox"
+                                checked={showHeroAge}
+                                onChange={(e) => setShowHeroAge(e.target.checked)}
+                                className="h-4 w-4 accent-[#C86D2D]"
+                              />
+                              <span>Возраст</span>
+                            </label>
+                            <input
+                              type="text"
+                              maxLength={40}
+                              required
+                              disabled={!showHeroAge}
+                              value={heroAgeText}
+                              onChange={(e) => setHeroAgeText(e.target.value)}
+                              placeholder="6–14 лет"
+                              className="min-h-[38px] w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF] sm:w-44"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <label className="inline-flex cursor-pointer items-center gap-2.5 text-sm font-medium text-[#111827]">
+                              <input
+                                type="checkbox"
+                                checked={showHeroDuration}
+                                onChange={(e) => setShowHeroDuration(e.target.checked)}
+                                className="h-4 w-4 accent-[#C86D2D]"
+                              />
+                              <span>Длительность</span>
+                            </label>
+                            <input
+                              type="text"
+                              maxLength={40}
+                              required
+                              disabled={!showHeroDuration}
+                              value={heroDurationText}
+                              onChange={(e) => setHeroDurationText(e.target.value)}
+                              placeholder="90 минут"
+                              className="min-h-[38px] w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF] sm:w-44"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <label className="inline-flex cursor-pointer items-center gap-2.5 text-sm font-medium text-[#111827]">
+                              <input
+                                type="checkbox"
+                                checked={showHeroGroups}
+                                onChange={(e) => setShowHeroGroups(e.target.checked)}
+                                className="h-4 w-4 accent-[#C86D2D]"
+                              />
+                              <span>Группы</span>
+                            </label>
+                            <input
+                              type="text"
+                              maxLength={40}
+                              required
+                              disabled={!showHeroGroups}
+                              value={heroGroupsText}
+                              onChange={(e) => setHeroGroupsText(e.target.value)}
+                              placeholder="2–4 места"
+                              className="min-h-[38px] w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF] sm:w-44"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <label className="inline-flex cursor-pointer items-center gap-2.5 text-sm font-medium text-[#111827]">
+                              <input
+                                type="checkbox"
+                                checked={showHeroFreeCancel}
+                                onChange={(e) => setShowHeroFreeCancel(e.target.checked)}
+                                className="h-4 w-4 accent-[#C86D2D]"
+                              />
+                              <span>Отмена без списания</span>
+                            </label>
+                            <span className="text-xs font-medium text-[#6B7280] tabular-nums">
+                              показывает: «за {freeCancelHours} ч»
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
                       <button
                         type="submit"
                         className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-5 text-sm font-medium text-white shadow-sm hover:bg-[#B05B20]"
                       >
-                        Сохранить правила
+                        Сохранить настройки
                       </button>
                     </div>
                   </form>
@@ -2460,6 +2715,133 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* Legal Documents Management (Offer, Personal Data, Privacy Policy) */}
+                  <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] lg:col-span-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+                      <h3 className="font-display text-base font-semibold text-[#111827]">
+                        Оферта, обработка персональных данных и политика конфиденциальности
+                      </h3>
+                    </div>
+                    <p className="mt-1 text-xs text-[#6B7280]">
+                      Эти документы отображаются в личном кабинете родителей и перед переходом к
+                      онлайн-оплате. Можно загрузить свой PDF / DOCX / изображение или
+                      отредактировать текст.
+                    </p>
+
+                    <div className="mt-4 space-y-3">
+                      {data.legal_documents.map((doc) => {
+                        const isEditingThis = editingLegalKey === doc.doc_key;
+                        return (
+                          <div
+                            key={doc.doc_key}
+                            className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
+                          >
+                            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                              <div>
+                                <div className="text-sm font-semibold text-[#111827]">{doc.title}</div>
+                                <div className="mt-0.5 text-xs text-[#6B7280]">
+                                  {doc.has_file === 1 && doc.original_name
+                                    ? `Прикреплён файл: ${doc.original_name}`
+                                    : 'Используется встроенный текст (файл не загружен)'}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <a
+                                  href={`/api/public/legal/${doc.doc_key}/file?inline=1`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex min-h-[38px] items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
+                                  Открыть
+                                </a>
+
+                                <label className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-lg bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]">
+                                  <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  <span>Загрузить файл</span>
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp"
+                                    onChange={(e) => {
+                                      const selected = e.target.files?.[0];
+                                      e.target.value = '';
+                                      void handleUploadLegalFile(doc.doc_key, selected);
+                                    }}
+                                    className="hidden"
+                                  />
+                                </label>
+
+                                {doc.has_file === 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteLegalFile(doc.doc_key)}
+                                    className="inline-flex min-h-[38px] cursor-pointer items-center gap-1 rounded-lg border border-[#FECACA] bg-white px-3 text-xs font-medium text-[#991B1B] hover:bg-[#FEF2F2]"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                    Убрать файл
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (isEditingThis) {
+                                      setEditingLegalKey(null);
+                                    } else {
+                                      setEditingLegalKey(doc.doc_key);
+                                      setLegalTitleInput(doc.title);
+                                      setLegalTextInput(doc.content_text);
+                                    }
+                                  }}
+                                  className="inline-flex min-h-[38px] cursor-pointer items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                                >
+                                  <Pencil className="h-3.5 w-3.5 text-[#6B7280]" strokeWidth={1.5} />
+                                  {isEditingThis ? 'Свернуть текст' : 'Редактировать текст'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {isEditingThis && (
+                              <div className="mt-3 space-y-2.5 border-t border-[#E5E7EB] pt-3">
+                                <input
+                                  type="text"
+                                  value={legalTitleInput}
+                                  onChange={(e) => setLegalTitleInput(e.target.value)}
+                                  placeholder="Заголовок документа"
+                                  className="min-h-[40px] w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:outline-none"
+                                />
+                                <textarea
+                                  rows={6}
+                                  value={legalTextInput}
+                                  onChange={(e) => setLegalTextInput(e.target.value)}
+                                  className="w-full rounded-xl border border-[#E5E7EB] bg-white p-3 text-xs leading-relaxed text-[#111827] focus:border-[#C86D2D] focus:outline-none"
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingLegalKey(null)}
+                                    className="min-h-[38px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-medium text-[#6B7280]"
+                                  >
+                                    Отмена
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSaveLegalText(doc.doc_key)}
+                                    className="min-h-[38px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-xs font-semibold text-white hover:bg-[#B05B20]"
+                                  >
+                                    Сохранить текст
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </motion.div>
               )}

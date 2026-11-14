@@ -93,7 +93,13 @@ export function exportAttendanceCsv(): string {
       r.id,
       r.lesson_title,
       r.start_time,
-      r.lesson_type === 'group' ? 'Групповое' : 'Индивидуальное',
+      r.lesson_type === 'group'
+        ? 'Группа'
+        : r.lesson_type === 'masterclass'
+          ? 'Мастер-класс'
+          : r.lesson_type === 'birthday'
+            ? 'День рождения'
+            : 'Индивидуальное',
       r.child_name,
       r.parent_name,
       r.status,

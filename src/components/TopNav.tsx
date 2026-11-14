@@ -1,6 +1,7 @@
 import { Hammer, Menu, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useState } from 'react';
+import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 export type ActiveView = 'schedule' | 'parent' | 'master';
 
@@ -95,6 +96,8 @@ export const TopNav: React.FC<TopNavProps> = ({ activeView, onNavigate, savedFam
 
         {/* Zone 3: Primary Action */}
         <div className="flex shrink-0 items-center gap-2">
+          <PWAInstallButton variant="nav" />
+
           <button
             type="button"
             onClick={() => {

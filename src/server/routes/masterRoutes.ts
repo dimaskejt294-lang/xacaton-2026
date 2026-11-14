@@ -28,6 +28,14 @@ import {
   getDatabaseFileSizeBytes,
   importClientsFromCsv,
 } from '../services/exportService.ts';
+import {
+  deleteLegalDocumentFile,
+  getLegalUploadsDir,
+  listLegalDocuments,
+  parseLegalDocKey,
+  saveLegalDocumentFile,
+  updateLegalDocumentText,
+} from '../services/legalService.ts';
 import { createNotification } from '../services/notificationService.ts';
 import {
   attachReceiptFile,
@@ -38,6 +46,16 @@ import {
 const ALLOWED_RECEIPT_EXTS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp']);
 const ALLOWED_RECEIPT_MIMES = new Set([
   'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
+const ALLOWED_LEGAL_EXTS = new Set(['.pdf', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.webp']);
+const ALLOWED_LEGAL_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
   'image/png',
   'image/jpeg',
   'image/webp',
@@ -112,6 +130,70 @@ function hasValidReceiptMagicBytes(filePath: string, ext: string): boolean {
         buf.subarray(0, 4).toString('ascii') === 'RIFF' &&
         buf.subarray(8, 12).toString('ascii') === 'WEBP'
       );
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore close error
+      }
+    }
+  }
+}
+
+const legalUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, getLegalUploadsDir());
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${crypto.randomUUID().replace(/-/g, '')}${ext}`);
+    },
+  }),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10 MB
+  },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_LEGAL_EXTS.has(ext) || !ALLOWED_LEGAL_MIMES.has(file.mimetype)) {
+      cb(
+        new HttpError(
+          400,
+          'Разрешены только файлы PDF, DOCX, TXT, PNG, JPG или WebP размером до 10 МБ'
+        )
+      );
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+function hasValidLegalMagicBytes(filePath: string, ext: string): boolean {
+  if (ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp') {
+    return hasValidReceiptMagicBytes(filePath, ext);
+  }
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(512);
+    const bytesRead = fs.readSync(fd, buf, 0, 512, 0);
+    if (ext === '.docx') {
+      return (
+        bytesRead >= 4 &&
+        buf[0] === 0x50 &&
+        buf[1] === 0x4b &&
+        (buf[2] === 0x03 || buf[2] === 0x05) &&
+        (buf[3] === 0x04 || buf[3] === 0x06)
+      );
+    }
+    if (ext === '.txt') {
+      if (bytesRead === 0) return false;
+      return !buf.subarray(0, bytesRead).includes(0);
     }
     return false;
   } catch {
@@ -203,7 +285,7 @@ masterRouter.get('/dashboard', (_req, res, next) => {
       .all() as Array<{
       id: number;
       title: string;
-      lesson_type: 'group' | 'individual';
+      lesson_type: 'group' | 'masterclass' | 'individual' | 'birthday';
       start_time: string;
       duration_minutes: number;
       capacity: number;
@@ -329,7 +411,12 @@ masterRouter.get('/dashboard', (_req, res, next) => {
       .all();
 
     const settings = db
-      .prepare('SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel FROM workshop_settings WHERE id = 1')
+      .prepare(
+        `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
+                show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
+                show_hero_groups, hero_groups_text, show_hero_free_cancel
+         FROM workshop_settings WHERE id = 1`
+      )
       .get();
 
     const enrichedLessons = lessons.map((lesson) => {
@@ -375,6 +462,7 @@ masterRouter.get('/dashboard', (_req, res, next) => {
       tariffs,
       attendance_logs: allLogs,
       reviews,
+      legal_documents: listLegalDocuments(),
       settings,
       db_size_bytes: getDatabaseFileSizeBytes(),
     });
@@ -383,10 +471,17 @@ masterRouter.get('/dashboard', (_req, res, next) => {
   }
 });
 
+function normalizeLessonType(raw: unknown): 'group' | 'masterclass' | 'individual' | 'birthday' {
+  if (raw === 'masterclass' || raw === 'individual' || raw === 'birthday') {
+    return raw;
+  }
+  return 'group';
+}
+
 masterRouter.post('/lessons', (req, res, next) => {
   try {
     const title = String(req.body?.title ?? '').trim();
-    const lessonType = req.body?.lesson_type === 'individual' ? 'individual' : 'group';
+    const lessonType = normalizeLessonType(req.body?.lesson_type);
     const startTimeRaw = String(req.body?.start_time ?? '').trim();
     const durationMinutes = Number(req.body?.duration_minutes ?? 90);
     const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : 4));
@@ -437,7 +532,7 @@ masterRouter.patch('/lessons/:lessonId', (req, res, next) => {
     }
 
     const title = String(req.body?.title ?? '').trim();
-    const lessonType = req.body?.lesson_type === 'individual' ? 'individual' : 'group';
+    const lessonType = normalizeLessonType(req.body?.lesson_type);
     const startTimeRaw = String(req.body?.start_time ?? '').trim();
     const durationMinutes = Number(req.body?.duration_minutes ?? 90);
     const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : 4));
@@ -937,6 +1032,29 @@ masterRouter.post(
 
 masterRouter.put('/settings', (req, res, next) => {
   try {
+    const db = getDb();
+    const existing = db
+      .prepare(
+        `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
+                show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
+                show_hero_groups, hero_groups_text, show_hero_free_cancel
+         FROM workshop_settings WHERE id = 1`
+      )
+      .get() as
+      | {
+          free_cancel_hours: number;
+          charge_on_miss: number;
+          charge_on_late_cancel: number;
+          show_hero_age: number;
+          hero_age_text: string;
+          show_hero_duration: number;
+          hero_duration_text: string;
+          show_hero_groups: number;
+          hero_groups_text: string;
+          show_hero_free_cancel: number;
+        }
+      | undefined;
+
     const freeCancelHours = Number(req.body?.free_cancel_hours);
     const chargeOnMiss = req.body?.charge_on_miss ? 1 : 0;
     const chargeOnLateCancel = req.body?.charge_on_late_cancel ? 1 : 0;
@@ -945,12 +1063,65 @@ masterRouter.put('/settings', (req, res, next) => {
       throw new HttpError(400, 'Срок бесплатной отмены должен быть от 0 до 168 часов');
     }
 
-    const db = getDb();
+    const toFlag = (val: unknown, fallback: number): number => {
+      if (val === undefined) return fallback;
+      return val === true || val === 1 || val === '1' ? 1 : 0;
+    };
+
+    const sanitizeText = (val: unknown, fallback: string, label: string): string => {
+      if (val === undefined) return fallback;
+      const cleaned = String(val)
+        .replace(/[\u0000-\u001F\u007F]/g, ' ')
+        .trim();
+      if (!cleaned || cleaned.length > 40) {
+        throw new HttpError(400, `Поле «${label}» должно содержать от 1 до 40 символов`);
+      }
+      return cleaned;
+    };
+
+    const showHeroAge = toFlag(req.body?.show_hero_age, existing?.show_hero_age ?? 1);
+    const heroAgeText = sanitizeText(
+      req.body?.hero_age_text,
+      existing?.hero_age_text ?? '6–14 лет',
+      'Возраст'
+    );
+    const showHeroDuration = toFlag(req.body?.show_hero_duration, existing?.show_hero_duration ?? 1);
+    const heroDurationText = sanitizeText(
+      req.body?.hero_duration_text,
+      existing?.hero_duration_text ?? '90 минут',
+      'Длительность'
+    );
+    const showHeroGroups = toFlag(req.body?.show_hero_groups, existing?.show_hero_groups ?? 1);
+    const heroGroupsText = sanitizeText(
+      req.body?.hero_groups_text,
+      existing?.hero_groups_text ?? '2–4 места',
+      'Группы'
+    );
+    const showHeroFreeCancel = toFlag(
+      req.body?.show_hero_free_cancel,
+      existing?.show_hero_free_cancel ?? 1
+    );
+
     db.prepare(
       `UPDATE workshop_settings
-       SET free_cancel_hours = ?, charge_on_miss = ?, charge_on_late_cancel = ?
+       SET free_cancel_hours = ?, charge_on_miss = ?, charge_on_late_cancel = ?,
+           show_hero_age = ?, hero_age_text = ?,
+           show_hero_duration = ?, hero_duration_text = ?,
+           show_hero_groups = ?, hero_groups_text = ?,
+           show_hero_free_cancel = ?
        WHERE id = 1`
-    ).run(freeCancelHours, chargeOnMiss, chargeOnLateCancel);
+    ).run(
+      freeCancelHours,
+      chargeOnMiss,
+      chargeOnLateCancel,
+      showHeroAge,
+      heroAgeText,
+      showHeroDuration,
+      heroDurationText,
+      showHeroGroups,
+      heroGroupsText,
+      showHeroFreeCancel
+    );
 
     res.json({ ok: true });
   } catch (err) {
@@ -1069,6 +1240,58 @@ masterRouter.delete('/reviews/:reviewId', (req, res, next) => {
     if (result.changes === 0) {
       throw new HttpError(404, 'Отзыв не найден');
     }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+masterRouter.post(
+  '/legal-documents/:docKey/file',
+  legalUpload.single('file'),
+  (req, res, next) => {
+    try {
+      const docKey = parseLegalDocKey(req.params.docKey);
+      if (!req.file) {
+        throw new HttpError(400, 'Выберите файл документа (PDF, DOCX, TXT, PNG, JPG или WebP)');
+      }
+      const ext = path.extname(req.file.filename).toLowerCase();
+      if (!hasValidLegalMagicBytes(req.file.path, ext)) {
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+        throw new HttpError(400, 'Содержимое файла не соответствует выбранному формату');
+      }
+      const originalName = decodeUploadedFilename(req.file.originalname);
+      saveLegalDocumentFile({
+        docKey,
+        storedFileName: req.file.filename,
+        originalName,
+        mimeType: req.file.mimetype,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+masterRouter.put('/legal-documents/:docKey', (req, res, next) => {
+  try {
+    const docKey = parseLegalDocKey(req.params.docKey);
+    const title = typeof req.body?.title === 'string' ? req.body.title : undefined;
+    const contentText = String(req.body?.content_text ?? '');
+    updateLegalDocumentText({ docKey, title, contentText });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+masterRouter.delete('/legal-documents/:docKey/file', (req, res, next) => {
+  try {
+    const docKey = parseLegalDocKey(req.params.docKey);
+    deleteLegalDocumentFile(docKey);
     res.json({ ok: true });
   } catch (err) {
     next(err);

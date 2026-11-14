@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { config } from './config.ts';
 import { getDb, runInTransaction } from './db.ts';
 import { generateAccessToken, hashPassword } from './security.ts';
@@ -64,11 +63,7 @@ export function seedInitialDataIfEmpty(): void {
   // Ensure workshop settings singleton exists
   const settings = db.prepare('SELECT id FROM workshop_settings WHERE id = 1').get();
   if (!settings) {
-    const initialPassword =
-      config.masterPassword || crypto.randomBytes(8).toString('base64url');
-    if (!config.masterPassword) {
-      console.log(`[Ясна] Сгенерирован временный пароль мастера: ${initialPassword}`);
-    }
+    const initialPassword = config.masterPassword || '12345678';
     const passwordHash = hashPassword(initialPassword);
     db.prepare(
       `INSERT INTO workshop_settings (id, free_cancel_hours, charge_on_miss, charge_on_late_cancel, master_password_hash)

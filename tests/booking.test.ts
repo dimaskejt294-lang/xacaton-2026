@@ -148,4 +148,44 @@ describe('Booking, capacity limits, attendance & configurable rules', () => {
     expect(cancelResult.charged).toBe(true);
     expect(getActiveLessonsRemaining(db, family1Id)).toBe(before - 1);
   });
+
+  it('allows master to enroll walk-in student on today started lesson while blocking parent', () => {
+    const db = getDb();
+    const oneHourAgo = new Date(Date.now() - 3600 * 1000).toISOString();
+    const resStarted = db
+      .prepare(
+        `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price, description)
+         VALUES ('Сегодняшняя группа', 'group', ?, 90, 6, 1200, 'Проверка добавления на месте')`
+      )
+      .run(oneHourAgo);
+    const startedLessonId = Number(resStarted.lastInsertRowid);
+
+    // Parent self-booking on a started lesson must still fail with 400
+    try {
+      createBooking({
+        lessonId: startedLessonId,
+        childId: child1Id,
+        familyIdConstraint: family1Id,
+      });
+      expect.unreachable('Expected 400 error for parent booking past/started lesson');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpErrorType).statusCode).toBe(400);
+    }
+
+    // Master (no familyIdConstraint) can add a walk-in student and mark attendance
+    const walkIn = createBooking({
+      lessonId: startedLessonId,
+      childId: child1Id,
+    });
+    expect(walkIn.bookingId).toBeGreaterThan(0);
+
+    const before = getActiveLessonsRemaining(db, family1Id);
+    updateBookingStatusByMaster({
+      bookingId: walkIn.bookingId,
+      newStatus: 'attended',
+      reason: 'Отметка через календарь',
+    });
+    expect(getActiveLessonsRemaining(db, family1Id)).toBe(before - 1);
+  });
 });

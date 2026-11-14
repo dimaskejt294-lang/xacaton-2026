@@ -3,11 +3,12 @@ import { getDb, HttpError, runInTransaction } from '../db.ts';
 import { createNotification } from './notificationService.ts';
 
 export type BookingStatus = 'booked' | 'attended' | 'missed' | 'canceled';
+export type LessonType = 'group' | 'masterclass' | 'individual' | 'birthday';
 
 interface LessonRow {
   id: number;
   title: string;
-  lesson_type: 'group' | 'individual';
+  lesson_type: LessonType;
   start_time: string;
   duration_minutes: number;
   capacity: number;
@@ -190,7 +191,7 @@ export function createBooking(params: {
     if (lesson.is_canceled) {
       throw new HttpError(409, 'Занятие было отменено мастером');
     }
-    if (new Date(lesson.start_time).getTime() <= Date.now()) {
+    if (params.familyIdConstraint !== undefined && new Date(lesson.start_time).getTime() <= Date.now()) {
       throw new HttpError(400, 'Нельзя записаться на уже прошедшее занятие');
     }
 
@@ -488,7 +489,41 @@ export function updateBookingStatusByMaster(params: {
        VALUES (?, ?, ?, ?, ?)`
     ).run(booking.id, booking.status, params.newStatus, params.reason?.trim() || 'Изменено мастером', now);
 
-    if (params.newStatus === 'canceled') {
+    if (params.newStatus === 'attended') {
+      createNotification(
+        booking.family_id,
+        'Посещение отмечено',
+        nextChargeAmount > 0
+          ? `${booking.child_name} посетил(а) занятие «${booking.lesson_title}» (${formatDateRu(
+              booking.start_time
+            )}). Начислено за разовое занятие: ${nextChargeAmount.toFixed(0)} ₽.`
+          : `${booking.child_name} посетил(а) занятие «${booking.lesson_title}» (${formatDateRu(
+              booking.start_time
+            )}). Отметка сохранена в журнале.`,
+        db
+      );
+    } else if (params.newStatus === 'missed') {
+      createNotification(
+        booking.family_id,
+        'Отмечен пропуск занятия',
+        shouldBeCharged
+          ? `${booking.child_name} не пришёл(а) на занятие «${booking.lesson_title}» (${formatDateRu(
+              booking.start_time
+            )}). Занятие списано по правилам мастерской.`
+          : `${booking.child_name} не пришёл(а) на занятие «${booking.lesson_title}» (${formatDateRu(
+              booking.start_time
+            )}). Занятие не списано.`,
+        db
+      );
+    } else if (params.newStatus === 'canceled') {
+      createNotification(
+        booking.family_id,
+        'Запись отменена мастером',
+        `Запись ребёнка ${booking.child_name} на «${booking.lesson_title}» (${formatDateRu(
+          booking.start_time
+        )}) отменена.`,
+        db
+      );
       notifyWaitlistIfSpotOpened(db, {
         id: booking.lesson_id,
         title: booking.lesson_title,

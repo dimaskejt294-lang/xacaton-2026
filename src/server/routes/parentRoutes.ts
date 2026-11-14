@@ -13,13 +13,22 @@ import {
   joinWaitlist,
 } from '../services/bookingService.ts';
 import {
+  createNotification,
   markAllNotificationsRead,
   markNotificationRead,
 } from '../services/notificationService.ts';
+import { listLegalDocuments } from '../services/legalService.ts';
 import {
   createOnlinePaymentForTariff,
   verifyAndApplyYooKassaPayment,
 } from '../services/paymentService.ts';
+import {
+  getPushSubscriptionCount,
+  getVapidPublicKey,
+  removePushSubscription,
+  savePushSubscription,
+  sendPushToFamily,
+} from '../services/pushService.ts';
 
 export const parentRouter = Router();
 
@@ -114,7 +123,12 @@ parentRouter.get('/:token', (req, res, next) => {
       .all();
 
     const settings = db
-      .prepare('SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel FROM workshop_settings WHERE id = 1')
+      .prepare(
+        `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
+                show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
+                show_hero_groups, hero_groups_text, show_hero_free_cancel
+         FROM workshop_settings WHERE id = 1`
+      )
       .get();
 
     const scheduleLessons = db
@@ -130,7 +144,7 @@ parentRouter.get('/:token', (req, res, next) => {
       .all() as Array<{
       id: number;
       title: string;
-      lesson_type: 'group' | 'individual';
+      lesson_type: 'group' | 'masterclass' | 'individual' | 'birthday';
       start_time: string;
       duration_minutes: number;
       capacity: number;
@@ -165,9 +179,11 @@ parentRouter.get('/:token', (req, res, next) => {
       payments,
       notifications,
       unread_notifications_count: unreadCount,
+      push_subscription_count: getPushSubscriptionCount(family.id),
       tariffs,
       settings,
       reviews: familyReviews,
+      legal_documents: listLegalDocuments(),
       schedule: scheduleLessons.map((l) => ({
         ...l,
         free_spots: Math.max(0, l.capacity - l.booked_count),
@@ -247,6 +263,17 @@ parentRouter.post('/:token/payments', async (req, res, next) => {
       throw new HttpError(400, 'Выберите тариф для оплаты');
     }
 
+    if (
+      req.body?.accepted_offer !== true ||
+      req.body?.accepted_personal_data !== true ||
+      req.body?.accepted_privacy !== true
+    ) {
+      throw new HttpError(
+        400,
+        'Для перехода к оплате необходимо подтвердить согласие с договором-офертой, обработкой персональных данных и политикой конфиденциальности'
+      );
+    }
+
     const detectedBaseUrl = getSafeRequestOrigin(req);
 
     const payment = await createOnlinePaymentForTariff({
@@ -254,6 +281,7 @@ parentRouter.post('/:token/payments', async (req, res, next) => {
       familyToken: family.access_token,
       tariffId,
       baseUrl: detectedBaseUrl,
+      consentedAt: new Date().toISOString(),
     });
 
     res.status(201).json({
@@ -365,6 +393,61 @@ parentRouter.post('/:token/reviews', (req, res, next) => {
       .run(family.id, family.parent_name, childInfo, rating, text, nowIso);
 
     res.status(201).json({ ok: true, review_id: Number(resDb.lastInsertRowid) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+parentRouter.get('/:token/push/vapid-public-key', (req, res, next) => {
+  try {
+    resolveFamilyByToken(req.params.token);
+    res.json({ publicKey: getVapidPublicKey() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+parentRouter.post('/:token/push/subscribe', (req, res, next) => {
+  try {
+    const family = resolveFamilyByToken(req.params.token);
+    const result = savePushSubscription(family.id, {
+      endpoint: String(req.body?.endpoint ?? ''),
+      keys: {
+        p256dh: String(req.body?.keys?.p256dh ?? ''),
+        auth: String(req.body?.keys?.auth ?? ''),
+      },
+    });
+    res.status(201).json({ ok: true, count: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+parentRouter.post('/:token/push/unsubscribe', (req, res, next) => {
+  try {
+    const family = resolveFamilyByToken(req.params.token);
+    const endpoint = String(req.body?.endpoint ?? '');
+    const result = removePushSubscription(family.id, endpoint);
+    res.json({ ok: true, count: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+parentRouter.post('/:token/push/test', async (req, res, next) => {
+  try {
+    const family = resolveFamilyByToken(req.params.token);
+    const title = 'Мастерская «Ясна» — проверка уведомлений';
+    const message =
+      'Push-уведомления работают! Сюда будут приходить чеки об оплате, подтверждения записи и напоминания перед занятиями.';
+    createNotification(family.id, title, message);
+    const delivery = await sendPushToFamily(family.id, {
+      title,
+      body: message,
+      url: `/lk/${encodeURIComponent(family.access_token)}`,
+      tag: 'yasna-test-push',
+    });
+    res.json({ ok: true, sent: delivery.sent, removed: delivery.removed });
   } catch (err) {
     next(err);
   }

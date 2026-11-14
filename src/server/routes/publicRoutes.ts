@@ -3,6 +3,12 @@ import path from 'node:path';
 import { Router } from 'express';
 import { getDb, HttpError } from '../db.ts';
 import { createRateLimiter, resolveFamilyByToken } from '../security.ts';
+import {
+  getLegalDocumentRow,
+  getLegalUploadsDir,
+  listLegalDocuments,
+  parseLegalDocKey,
+} from '../services/legalService.ts';
 
 export const publicRouter = Router();
 
@@ -28,7 +34,7 @@ publicRouter.get('/schedule', (_req, res, next) => {
       .all() as Array<{
       id: number;
       title: string;
-      lesson_type: 'group' | 'individual';
+      lesson_type: 'group' | 'masterclass' | 'individual' | 'birthday';
       start_time: string;
       duration_minutes: number;
       capacity: number;
@@ -46,7 +52,12 @@ publicRouter.get('/schedule', (_req, res, next) => {
       .all();
 
     const settings = db
-      .prepare('SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel FROM workshop_settings WHERE id = 1')
+      .prepare(
+        `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
+                show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
+                show_hero_groups, hero_groups_text, show_hero_free_cancel
+         FROM workshop_settings WHERE id = 1`
+      )
       .get();
 
     const reviews = db
@@ -100,6 +111,64 @@ publicRouter.get('/guide-pdf', (_req, res, next) => {
     }
     res.setHeader('Content-Type', 'application/pdf');
     res.download(pdfPath, 'yasna-documentation-v1.pdf');
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicRouter.get('/legal', (_req, res, next) => {
+  try {
+    res.json({ documents: listLegalDocuments() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicRouter.get('/legal/:docKey/file', (req, res, next) => {
+  try {
+    const docKey = parseLegalDocKey(req.params.docKey);
+    const doc = getLegalDocumentRow(docKey);
+    const inline = req.query.inline === '1';
+
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+
+    if (doc.file_path) {
+      const legalDir = path.resolve(getLegalUploadsDir());
+      const safeName = path.basename(doc.file_path);
+      const fullPath = path.resolve(legalDir, safeName);
+      if (!fullPath.startsWith(`${legalDir}${path.sep}`) || !fs.existsSync(fullPath)) {
+        throw new HttpError(404, 'Файл документа не найден на сервере');
+      }
+
+      const ext = path.extname(safeName).toLowerCase();
+      const canInline = ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp' || ext === '.txt';
+      const downloadName = doc.original_name || `${doc.doc_key}${ext || '.pdf'}`;
+
+      if (doc.mime_type) {
+        res.setHeader('Content-Type', doc.mime_type);
+      }
+
+      if (inline && canInline) {
+        res.setHeader(
+          'Content-Disposition',
+          `inline; filename*=UTF-8''${encodeURIComponent(downloadName)}`
+        );
+        res.sendFile(fullPath);
+        return;
+      }
+
+      res.download(fullPath, downloadName);
+      return;
+    }
+
+    const fallbackFilename = `${doc.doc_key}.txt`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(fallbackFilename)}`
+    );
+    res.send(doc.content_text);
   } catch (err) {
     next(err);
   }

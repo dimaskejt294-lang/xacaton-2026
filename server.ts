@@ -1,6 +1,7 @@
 import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
+import http from 'node:http';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
 import { config } from './src/server/config.ts';
@@ -10,12 +11,14 @@ import { parentRouter } from './src/server/routes/parentRoutes.ts';
 import { publicRouter } from './src/server/routes/publicRoutes.ts';
 import { webhookRouter } from './src/server/routes/webhookRoutes.ts';
 import { seedInitialDataIfEmpty } from './src/server/seed.ts';
+import { startReminderScheduler } from './src/server/services/pushService.ts';
 
 async function bootstrap(): Promise<void> {
   getDb();
   seedInitialDataIfEmpty();
 
   const app = express();
+  const httpServer = http.createServer(app);
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
@@ -62,7 +65,10 @@ async function bootstrap(): Promise<void> {
 
   if (!config.isProduction) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -74,8 +80,9 @@ async function bootstrap(): Promise<void> {
     });
   }
 
-  app.listen(config.port, '0.0.0.0', () => {
+  httpServer.listen(config.port, '0.0.0.0', () => {
     console.log(`[Ясна] Сервер запущен на http://0.0.0.0:${config.port}`);
+    startReminderScheduler();
   });
 }
 

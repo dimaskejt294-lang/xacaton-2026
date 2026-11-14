@@ -1,4 +1,4 @@
-export type LessonType = 'group' | 'individual';
+export type LessonType = 'group' | 'masterclass' | 'individual' | 'birthday';
 export type BookingStatus = 'booked' | 'attended' | 'missed' | 'canceled';
 export type PaymentMethod = 'yookassa' | 'cash' | 'transfer';
 export type PaymentStatus = 'pending' | 'succeeded' | 'canceled';
@@ -7,6 +7,13 @@ export interface WorkshopSettings {
   free_cancel_hours: number;
   charge_on_miss: number;
   charge_on_late_cancel: number;
+  show_hero_age?: number;
+  hero_age_text?: string;
+  show_hero_duration?: number;
+  hero_duration_text?: string;
+  show_hero_groups?: number;
+  hero_groups_text?: string;
+  show_hero_free_cancel?: number;
 }
 
 export interface Tariff {
@@ -119,6 +126,18 @@ export interface ReviewItem {
   created_at: string;
 }
 
+export type LegalDocKey = 'offer' | 'personal_data' | 'privacy';
+
+export interface LegalDocumentItem {
+  doc_key: LegalDocKey;
+  title: string;
+  has_file: number;
+  original_name: string | null;
+  mime_type: string | null;
+  content_text: string;
+  updated_at: string;
+}
+
 export interface ParentDashboardData {
   family: {
     id: number;
@@ -135,9 +154,11 @@ export interface ParentDashboardData {
   payments: PaymentItem[];
   notifications: NotificationItem[];
   unread_notifications_count: number;
+  push_subscription_count?: number;
   tariffs: Tariff[];
   settings: WorkshopSettings;
   reviews: ReviewItem[];
+  legal_documents: LegalDocumentItem[];
   schedule: PublicLesson[];
 }
 
@@ -204,6 +225,7 @@ export interface MasterDashboardData {
   tariffs: Tariff[];
   attendance_logs: AttendanceLogItem[];
   reviews: ReviewItem[];
+  legal_documents: LegalDocumentItem[];
   settings: WorkshopSettings;
   db_size_bytes: number;
 }
