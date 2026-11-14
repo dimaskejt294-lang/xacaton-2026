@@ -284,8 +284,8 @@ export function runInTransaction<T>(fn: (db: DatabaseSync) => T): T {
   } catch (err) {
     try {
       db.exec('ROLLBACK;');
-    } catch {
-      // Ignore rollback errors if transaction was already closed
+    } catch (rollbackErr) {
+      console.warn('[DB] Ошибка при откате транзакции:', rollbackErr);
     }
     throw err;
   }

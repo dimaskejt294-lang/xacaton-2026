@@ -62,7 +62,8 @@ const MASTER_SESSION_STORAGE_KEY = 'yasna_master_session_token';
 function readStoredMasterSession(): string | null {
   try {
     return sessionStorage.getItem(MASTER_SESSION_STORAGE_KEY);
-  } catch {
+  } catch (err) {
+    console.warn('[MasterPanel] Ошибка чтения sessionStorage:', err);
     return null;
   }
 }
@@ -74,8 +75,8 @@ function writeStoredMasterSession(token: string | null): void {
     } else {
       sessionStorage.removeItem(MASTER_SESSION_STORAGE_KEY);
     }
-  } catch {
-    // Ignore storage errors in restricted environments
+  } catch (err) {
+    console.warn('[MasterPanel] Ошибка записи в sessionStorage:', err);
   }
 }
 
@@ -274,7 +275,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
           writeStoredMasterSession(null);
           setSessionToken(null);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[MasterPanel] Ошибка проверки сессии:', err);
         setAuthenticated(false);
       }
     };
@@ -304,7 +306,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       setPassword('');
       setAuthenticated(true);
       await loadDashboard();
-    } catch {
+    } catch (err) {
+      console.error('[MasterPanel] Ошибка авторизации мастера:', err);
       setLoginError('Ошибка входа. Проверьте соединение.');
     } finally {
       setLoggingIn(false);
@@ -634,7 +637,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     try {
       await navigator.clipboard.writeText(fullUrl);
       setBanner({ type: 'success', text: 'Персональная ссылка семьи скопирована в буфер обмена.' });
-    } catch {
+    } catch (err) {
+      console.warn('[MasterPanel] Не удалось скопировать ссылку в буфер обмена:', err);
       setBanner({
         type: 'error',
         text: 'Не удалось автоматически скопировать ссылку. Проверьте разрешения буфера обмена в браузере.',
@@ -727,7 +731,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-    } catch {
+    } catch (err) {
+      console.error('[MasterPanel] Ошибка сети при скачивании файла:', err);
       setBanner({ type: 'error', text: 'Ошибка сети при скачивании файла' });
     } finally {
       setDownloadingKey(null);
@@ -749,7 +754,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       const name = originalName || `Чек_${paymentId}`;
       const isPdf = blob.type === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
       setPreviewReceipt({ name, blobUrl, isPdf });
-    } catch {
+    } catch (err) {
+      console.error('[MasterPanel] Ошибка сети при загрузке файла чека:', err);
       setBanner({ type: 'error', text: 'Ошибка сети при загрузке файла чека' });
     } finally {
       setDownloadingKey(null);
@@ -875,7 +881,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
           body.families_count ?? 0
         }), push-доставка на устройства: ${body.push_sent ?? 0}.`,
       });
-    } catch {
+    } catch (err) {
+      console.error('[MasterPanel] Ошибка сети при рассылке уведомления:', err);
       setBanner({
         type: 'error',
         text: 'Ошибка сети при рассылке уведомления',
@@ -919,7 +926,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       setNewPasswordInput('');
       setConfirmPasswordInput('');
       setBanner({ type: 'success', text: 'Пароль руководителя мастерской успешно обновлён.' });
-    } catch {
+    } catch (err) {
+      console.error('[MasterPanel] Ошибка при смене пароля:', err);
       setBanner({ type: 'error', text: 'Ошибка сети при смене пароля' });
     } finally {
       setChangingPassword(false);

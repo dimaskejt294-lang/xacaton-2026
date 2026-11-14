@@ -16,7 +16,8 @@ function readSavedToken(): string | null {
       localStorage.getItem(STORAGE_KEY_FAMILY_TOKEN) ||
       sessionStorage.getItem(STORAGE_KEY_FAMILY_TOKEN)
     );
-  } catch {
+  } catch (err) {
+    console.warn('[App] Не удалось прочитать токен семьи из storage:', err);
     return null;
   }
 }
@@ -75,8 +76,8 @@ export default function App() {
     try {
       localStorage.setItem(STORAGE_KEY_FAMILY_TOKEN, token);
       sessionStorage.setItem(STORAGE_KEY_FAMILY_TOKEN, token);
-    } catch {
-      // Ignore storage access restrictions
+    } catch (err) {
+      console.warn('[App] Не удалось сохранить токен семьи в storage:', err);
     }
   }, []);
 

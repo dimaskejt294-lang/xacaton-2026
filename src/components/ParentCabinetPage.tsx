@@ -45,6 +45,16 @@ import {
 } from '../utils/pushClient.ts';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 
+function isSafeHttpUrl(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false;
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 interface ParentCabinetPageProps {
   token: string;
   onNavigate: (path: string) => void;
@@ -1415,15 +1425,17 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                       нажмите «Проверить оплату».
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <a
-                        href={pendingCheckout.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white hover:bg-[#B05B20]"
-                      >
-                        <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
-                        Перейти в ЮKassa
-                      </a>
+                      {isSafeHttpUrl(pendingCheckout.url) && (
+                        <a
+                          href={pendingCheckout.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white hover:bg-[#B05B20]"
+                        >
+                          <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
+                          Перейти в ЮKassa
+                        </a>
+                      )}
                       {pendingCheckout.paymentId > 0 && (
                         <button
                           type="button"
@@ -1515,7 +1527,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                             )
                           )}
 
-                          {payment.receipt_url && (
+                          {payment.receipt_url && isSafeHttpUrl(payment.receipt_url) && (
                             <a
                               href={payment.receipt_url}
                               target="_blank"

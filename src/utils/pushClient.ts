@@ -22,36 +22,65 @@ function generateSecureCorrelationId(): string {
   throw new Error('Web Crypto API недоступен в текущем окружении');
 }
 
+let cachedClientVapidKey: string | null = null;
+
 function getEnvVapidPublicKey(): string {
   const raw = import.meta.env.VITE_VAPID_PUBLIC_KEY;
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
 function isValidVapidPublicKey(key: string): boolean {
-  return /^[A-Za-z0-9_-]{60,120}$/.test(key);
+  return typeof key === 'string' && /^[A-Za-z0-9_-]{60,120}$/.test(key.trim());
 }
 
-async function resolveVapidPublicKey(token: string): Promise<{ publicKey?: string; error?: string }> {
+export async function fetchServerVapidPublicKey(
+  token?: string | null
+): Promise<{ publicKey?: string; error?: string }> {
+  if (cachedClientVapidKey && isValidVapidPublicKey(cachedClientVapidKey)) {
+    return { publicKey: cachedClientVapidKey };
+  }
+
   const envKey = getEnvVapidPublicKey();
-  if (envKey) {
-    if (!isValidVapidPublicKey(envKey)) {
-      return { error: 'Некорректный формат VITE_VAPID_PUBLIC_KEY в конфигурации окружения' };
-    }
+  if (envKey && isValidVapidPublicKey(envKey)) {
+    cachedClientVapidKey = envKey;
     return { publicKey: envKey };
   }
 
-  const keyRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`, {
-    headers: {
-      'X-Request-Id': generateSecureCorrelationId(),
-    },
-  });
-  const keyBody = (await keyRes.json().catch(() => ({}))) as { publicKey?: string; error?: string };
-  if (!keyRes.ok || !keyBody.publicKey || !isValidVapidPublicKey(keyBody.publicKey)) {
-    return {
-      error: keyBody.error || 'Не удалось получить ключ push-сервера',
-    };
+  // 1. Primary: query public /api/push/vapid-public-key endpoint
+  try {
+    const res = await fetch('/api/push/vapid-public-key', {
+      headers: { 'X-Request-Id': generateSecureCorrelationId() },
+    });
+    if (res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { publicKey?: string };
+      if (data.publicKey && isValidVapidPublicKey(data.publicKey)) {
+        cachedClientVapidKey = data.publicKey.trim();
+        return { publicKey: cachedClientVapidKey };
+      }
+    }
+  } catch (err) {
+    console.warn('[PushClient] Ошибка обращения к /api/push/vapid-public-key:', err);
   }
-  return { publicKey: keyBody.publicKey };
+
+  // 2. Secondary fallback: query family token endpoint if token is provided
+  if (token) {
+    try {
+      const tokenRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`, {
+        headers: { 'X-Request-Id': generateSecureCorrelationId() },
+      });
+      if (tokenRes.ok) {
+        const data = (await tokenRes.json().catch(() => ({}))) as { publicKey?: string };
+        if (data.publicKey && isValidVapidPublicKey(data.publicKey)) {
+          cachedClientVapidKey = data.publicKey.trim();
+          return { publicKey: cachedClientVapidKey };
+        }
+      }
+    } catch (err) {
+      console.warn('[PushClient] Ошибка обращения к эндпоинту ЛК:', err);
+    }
+  }
+
+  return { error: 'Не удалось получить публичный VAPID-ключ для push-уведомлений' };
 }
 
 export function isPushSupported(): boolean {
@@ -77,7 +106,8 @@ export async function getDevicePushStatus(): Promise<{
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     return { supported: true, permission, subscribed: Boolean(sub) };
-  } catch {
+  } catch (err) {
+    console.warn('[PushClient] Ошибка проверки подписки push:', err);
     return { supported: true, permission, subscribed: false };
   }
 }
@@ -103,15 +133,7 @@ export async function subscribeFamilyPush(
       };
     }
 
-    if (!token) {
-      return {
-        ok: true,
-        message:
-          'Разрешение на уведомления выдано! Откройте ваш личный кабинет по персональной ссылке, чтобы привязать уведомления к вашей семье.',
-      };
-    }
-
-    const { publicKey, error } = await resolveVapidPublicKey(token);
+    const { publicKey, error } = await fetchServerVapidPublicKey(token);
     if (!publicKey) {
       return {
         ok: false,
@@ -126,6 +148,14 @@ export async function subscribeFamilyPush(
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
+    }
+
+    if (!token) {
+      return {
+        ok: true,
+        message:
+          'Уведомления успешно разрешены на этом устройстве! Откройте персональную ссылку семьи, чтобы связать напоминания с вашим расписанием.',
+      };
     }
 
     const subJson = subscription.toJSON();
@@ -154,7 +184,8 @@ export async function subscribeFamilyPush(
       message:
         'Уведомления на это устройство включены: будут приходить чеки об оплате, подтверждения записи, отметки посещаемости и напоминания перед занятиями.',
     };
-  } catch {
+  } catch (err) {
+    console.error('[PushClient] Ошибка оформления push-подписки:', err);
     return {
       ok: false,
       message:

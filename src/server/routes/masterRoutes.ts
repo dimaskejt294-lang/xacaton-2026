@@ -88,7 +88,7 @@ const receiptUpload = multer({
     },
   }),
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB
+    fileSize: 5_000_000, // 5 MB
     files: 1,
     fields: 10,
   },
@@ -137,14 +137,15 @@ function hasValidReceiptMagicBytes(filePath: string, ext: string): boolean {
       );
     }
     return false;
-  } catch {
+  } catch (err) {
+    console.warn('[MasterRoutes] Ошибка проверки magic bytes файла чека:', err);
     return false;
   } finally {
     if (fd !== null) {
       try {
         fs.closeSync(fd);
-      } catch {
-        // Ignore close error
+      } catch (closeErr) {
+        console.warn('[MasterRoutes] Ошибка закрытия fd чека:', closeErr);
       }
     }
   }
@@ -161,7 +162,7 @@ const legalUpload = multer({
     },
   }),
   limits: {
-    fileSize: 8 * 1024 * 1024, // 8 MB (SonarQube S5693 compliant)
+    fileSize: 8_000_000, // strictly <= 8,000,000 bytes (SonarQube S5693)
     files: 1,
     fields: 10,
   },
@@ -203,14 +204,15 @@ function hasValidLegalMagicBytes(filePath: string, ext: string): boolean {
       return !buf.subarray(0, bytesRead).includes(0);
     }
     return false;
-  } catch {
+  } catch (err) {
+    console.warn('[MasterRoutes] Ошибка проверки magic bytes документа:', err);
     return false;
   } finally {
     if (fd !== null) {
       try {
         fs.closeSync(fd);
-      } catch {
-        // Ignore close error
+      } catch (closeErr) {
+        console.warn('[MasterRoutes] Ошибка закрытия fd документа:', closeErr);
       }
     }
   }
@@ -1012,8 +1014,8 @@ masterRouter.post(
       if (req.file?.path && fs.existsSync(req.file.path)) {
         try {
           fs.unlinkSync(req.file.path);
-        } catch {
-          // Ignore cleanup error
+        } catch (cleanupErr) {
+          console.warn('[MasterRoutes] Не удалось удалить временный файл чека:', cleanupErr);
         }
       }
       next(err);
@@ -1256,8 +1258,8 @@ masterRouter.post(
       if (req.file?.path && fs.existsSync(req.file.path)) {
         try {
           fs.unlinkSync(req.file.path);
-        } catch {
-          // Ignore cleanup error
+        } catch (cleanupErr) {
+          console.warn('[MasterRoutes] Не удалось удалить временный файл документа:', cleanupErr);
         }
       }
       next(err);

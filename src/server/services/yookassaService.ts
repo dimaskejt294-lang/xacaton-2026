@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { config } from '../config.ts';
 import { HttpError } from '../db.ts';
 
 export interface YooKassaPaymentResponse {
@@ -23,8 +22,8 @@ const EXTERNAL_PAYMENT_ID_REGEX = /^[A-Za-z0-9_-]{8,128}$/;
 const ALLOWED_STATUSES = new Set(['pending', 'waiting_for_capture', 'succeeded', 'canceled']);
 
 function getAuthHeader(): string {
-  const shopId = (process.env.YOOKASSA_SHOP_ID ?? config.yookassaShopId ?? '').trim();
-  const secretKey = (process.env.YOOKASSA_SECRET_KEY ?? config.yookassaSecretKey ?? '').trim();
+  const shopId = (process.env.YOOKASSA_SHOP_ID ?? '').trim();
+  const secretKey = (process.env.YOOKASSA_SECRET_KEY ?? '').trim();
 
   if (!shopId || !secretKey) {
     throw new HttpError(

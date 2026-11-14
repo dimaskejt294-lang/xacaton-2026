@@ -11,7 +11,7 @@ import { parentRouter } from './src/server/routes/parentRoutes.ts';
 import { publicRouter } from './src/server/routes/publicRoutes.ts';
 import { webhookRouter } from './src/server/routes/webhookRoutes.ts';
 import { seedInitialDataIfEmpty } from './src/server/seed.ts';
-import { startReminderScheduler } from './src/server/services/pushService.ts';
+import { getVapidPublicKey, startReminderScheduler } from './src/server/services/pushService.ts';
 
 async function bootstrap(): Promise<void> {
   getDb();
@@ -41,6 +41,17 @@ async function bootstrap(): Promise<void> {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     next();
+  });
+
+  app.get('/api/push/vapid-public-key', (_req, res) => {
+    try {
+      const publicKey = getVapidPublicKey();
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.json({ publicKey });
+    } catch (err) {
+      console.error('[Ясна Push] Ошибка выдачи VAPID-ключа:', err);
+      res.status(500).json({ error: 'Не удалось получить публичный VAPID-ключ' });
+    }
   });
 
   app.use('/api/public', publicRouter);

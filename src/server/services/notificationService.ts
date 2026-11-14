@@ -30,7 +30,9 @@ export function createNotification(
           title,
           body: message,
           tag: `yasna-notif-${notificationId}`,
-        }).catch(() => {});
+        }).catch((err) => {
+          console.warn('[NotificationService] Ошибка отправки push-уведомления:', err);
+        });
       });
     }
   }

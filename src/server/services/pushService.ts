@@ -1,5 +1,8 @@
+import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import * as webpushNamespace from 'web-push';
+import { config } from '../config.ts';
 import { getDb, HttpError, runInTransaction } from '../db.ts';
 
 const webpush = (
@@ -30,41 +33,112 @@ interface PushSubscriptionRow {
   auth: string;
 }
 
-let cachedVapid: { publicKey: string; privateKey: string } | null = null;
+interface VapidKeysRecord {
+  publicKey: string;
+  privateKey: string;
+}
+
+let cachedVapid: VapidKeysRecord | null = null;
 let reminderTimer: NodeJS.Timeout | null = null;
 
-function ensureVapidConfig(): { publicKey: string; privateKey: string } {
+export function getVapidJsonPath(): string {
+  if (process.env.VAPID_KEYS_FILE) {
+    return path.resolve(process.env.VAPID_KEYS_FILE);
+  }
+  const dbDir = path.dirname(config.databasePath);
+  if (path.basename(dbDir) === 'data' || dbDir.endsWith('/data')) {
+    return path.join(dbDir, 'vapid.json');
+  }
+  return path.resolve(process.cwd(), 'data', 'vapid.json');
+}
+
+function loadVapidFromFile(filePath: string): VapidKeysRecord | null {
+  try {
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      const pub = typeof data.publicKey === 'string' ? data.publicKey.trim() : '';
+      const priv = typeof data.privateKey === 'string' ? data.privateKey.trim() : '';
+      if (pub && priv) {
+        return { publicKey: pub, privateKey: priv };
+      }
+    }
+  } catch (err) {
+    console.warn('[Ясна Push] Не удалось прочитать vapid.json:', err);
+  }
+  return null;
+}
+
+function saveVapidToFile(filePath: string, keys: VapidKeysRecord): void {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(keys, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  } catch (err) {
+    console.warn('[Ясна Push] Не удалось сохранить vapid.json на диск:', err);
+  }
+}
+
+export function ensureVapidConfig(): VapidKeysRecord {
   if (cachedVapid) {
     return cachedVapid;
   }
 
+  const vapidSubject = (process.env.VAPID_SUBJECT || 'mailto:master@yasna-surgut.ru').trim();
+
+  // 1. Environment variables have highest priority
+  const envPub = (process.env.VAPID_PUBLIC_KEY ?? '').trim();
+  const envPriv = (process.env.VAPID_PRIVATE_KEY ?? '').trim();
+  if (envPub && envPriv) {
+    webpush.setVapidDetails(vapidSubject, envPub, envPriv);
+    cachedVapid = { publicKey: envPub, privateKey: envPriv };
+    return cachedVapid;
+  }
+
+  // 2. Persistent vapid.json file in data directory
+  const vapidFile = getVapidJsonPath();
+  const fileKeys = loadVapidFromFile(vapidFile);
+  if (fileKeys) {
+    webpush.setVapidDetails(vapidSubject, fileKeys.publicKey, fileKeys.privateKey);
+    cachedVapid = fileKeys;
+    try {
+      const db = getDb();
+      db.prepare(
+        `INSERT INTO vapid_config (id, public_key, private_key)
+         VALUES (1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET public_key = excluded.public_key, private_key = excluded.private_key`
+      ).run(fileKeys.publicKey, fileKeys.privateKey);
+    } catch (dbErr) {
+      console.warn('[Ясна Push] Синхронизация vapid_config в БД пропущена:', dbErr);
+    }
+    return cachedVapid;
+  }
+
+  // 3. Database table
   const db = getDb();
-  const existing = db
+  const dbRow = db
     .prepare('SELECT public_key, private_key FROM vapid_config WHERE id = 1')
     .get() as { public_key: string; private_key: string } | undefined;
 
-  let publicKey = existing?.public_key;
-  let privateKey = existing?.private_key;
+  let publicKey = dbRow?.public_key;
+  let privateKey = dbRow?.private_key;
 
+  // 4. Auto-generate new VAPID keys if none found
   if (!publicKey || !privateKey) {
     const generated = webpush.generateVAPIDKeys();
     publicKey = generated.publicKey;
     privateKey = generated.privateKey;
-    db.prepare(
-      `INSERT OR IGNORE INTO vapid_config (id, public_key, private_key)
-       VALUES (1, ?, ?)`
-    ).run(publicKey, privateKey);
 
-    const stored = db
-      .prepare('SELECT public_key, private_key FROM vapid_config WHERE id = 1')
-      .get() as { public_key: string; private_key: string } | undefined;
-    if (stored) {
-      publicKey = stored.public_key;
-      privateKey = stored.private_key;
-    }
+    db.prepare(
+      `INSERT INTO vapid_config (id, public_key, private_key)
+       VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET public_key = excluded.public_key, private_key = excluded.private_key`
+    ).run(publicKey, privateKey);
   }
 
-  webpush.setVapidDetails('mailto:master@yasna-surgut.ru', publicKey, privateKey);
+  // Persist keys to file so they survive restarts / image rebuilds
+  saveVapidToFile(vapidFile, { publicKey, privateKey });
+
+  webpush.setVapidDetails(vapidSubject, publicKey, privateKey);
   cachedVapid = { publicKey, privateKey };
   return cachedVapid;
 }
@@ -258,6 +332,8 @@ export async function sendPushToFamily(
         if (statusCode === 404 || statusCode === 410) {
           db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
           removed += 1;
+        } else {
+          console.warn('[Ясна Push] Ошибка отправки на эндпоинт:', statusCode, err);
         }
       }
     })
@@ -330,7 +406,9 @@ export function processUpcomingLessonReminders(nowDate: Date = new Date()): numb
       title: item.title,
       body: item.message,
       tag: 'yasna-lesson-reminder',
-    }).catch(() => {});
+    }).catch((pushErr) => {
+      console.warn('[Ясна Push] Ошибка отправки напоминания о занятии:', pushErr);
+    });
   }
 
   return candidates.length;

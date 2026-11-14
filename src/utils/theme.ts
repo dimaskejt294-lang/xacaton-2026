@@ -12,8 +12,8 @@ export function getInitialTheme(): ThemeMode {
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
       return 'dark';
     }
-  } catch {
-    // Ignore storage access errors
+  } catch (err) {
+    console.warn('[Theme] Ошибка чтения темы из localStorage:', err);
   }
   return 'light';
 }
@@ -32,7 +32,7 @@ export function applyTheme(theme: ThemeMode): void {
   }
   try {
     localStorage.setItem(STORAGE_KEY_THEME, theme);
-  } catch {
-    // Ignore storage access errors
+  } catch (err) {
+    console.warn('[Theme] Ошибка сохранения темы в localStorage:', err);
   }
 }
