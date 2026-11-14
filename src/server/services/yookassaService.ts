@@ -18,12 +18,27 @@ export interface YooKassaPaymentResponse {
 
 const YOOKASSA_API_BASE_URL = 'https://api.yookassa.ru/v3';
 const YOOKASSA_REQUEST_TIMEOUT_MS = 10_000;
-const EXTERNAL_PAYMENT_ID_REGEX = /^[A-Za-z0-9_-]{8,128}$/;
 const ALLOWED_STATUSES = new Set(['pending', 'waiting_for_capture', 'succeeded', 'canceled']);
 
+function isValidIdentifierString(value: unknown, minLen = 8, maxLen = 128): boolean {
+  if (typeof value !== 'string') return false;
+  const str = value.trim();
+  if (str.length < minLen || str.length > maxLen) return false;
+  for (let i = 0; i < str.length; i += 1) {
+    const code = str.charCodeAt(i);
+    const isAlphanumeric =
+      (code >= 48 && code <= 57) || // 0-9
+      (code >= 65 && code <= 90) || // A-Z
+      (code >= 97 && code <= 122); // a-z
+    const isSpecial = code === 45 || code === 95; // - or _
+    if (!isAlphanumeric && !isSpecial) return false;
+  }
+  return true;
+}
+
 function getAuthHeader(): string {
-  const shopId = (process.env.YOOKASSA_SHOP_ID ?? '').trim();
-  const secretKey = (process.env.YOOKASSA_SECRET_KEY ?? '').trim();
+  const shopId = process.env.YOOKASSA_SHOP_ID?.trim();
+  const secretKey = process.env.YOOKASSA_SECRET_KEY?.trim();
 
   if (!shopId || !secretKey) {
     throw new HttpError(
@@ -36,15 +51,30 @@ function getAuthHeader(): string {
 }
 
 function validateReturnUrl(rawUrl: string): string {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim() || rawUrl.length > 512) {
+    throw new HttpError(400, 'Некорректная длина URL возврата');
+  }
   try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      throw new Error('Invalid protocol');
+    const parsed = new URL(rawUrl.trim());
+    const isHttps = parsed.protocol === 'https:';
+    const isLocalHttp =
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+
+    if (!isHttps && !isLocalHttp) {
+      throw new Error('Return URL must use secure HTTPS protocol');
+    }
+    if (parsed.username || parsed.password) {
+      throw new Error('Credentials not allowed in returnUrl');
     }
     return parsed.toString();
   } catch {
     throw new HttpError(400, 'Некорректный URL возврата после оплаты');
   }
+}
+
+function sanitizeLogText(text: string, maxLength = 300): string {
+  return text.replace(/[\r\n\t]/g, ' ').slice(0, maxLength);
 }
 
 function parseAndValidatePaymentResponse(payload: unknown): YooKassaPaymentResponse {
@@ -57,11 +87,11 @@ function parseAndValidatePaymentResponse(payload: unknown): YooKassaPaymentRespo
   const amountObj =
     obj.amount && typeof obj.amount === 'object' ? (obj.amount as Record<string, unknown>) : null;
   const amountValue = amountObj && typeof amountObj.value === 'string' ? amountObj.value : '';
-  const amountCurrency = amountObj && typeof amountObj.currency === 'string' ? amountObj.currency : '';
+  const amountCurrency =
+    amountObj && typeof amountObj.currency === 'string' ? amountObj.currency : '';
 
   if (
-    !id ||
-    !EXTERNAL_PAYMENT_ID_REGEX.test(id) ||
+    !isValidIdentifierString(id, 8, 128) ||
     !ALLOWED_STATUSES.has(status) ||
     !amountValue ||
     !amountCurrency
@@ -87,7 +117,7 @@ export async function createYooKassaPayment(params: {
 
   const safeReturnUrl = validateReturnUrl(params.returnUrl);
   const idempotenceKey =
-    params.idempotenceKey && EXTERNAL_PAYMENT_ID_REGEX.test(params.idempotenceKey)
+    params.idempotenceKey && isValidIdentifierString(params.idempotenceKey, 8, 128)
       ? params.idempotenceKey
       : crypto.randomUUID();
   const amountValue = params.amountRub.toFixed(2);
@@ -118,7 +148,8 @@ export async function createYooKassaPayment(params: {
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error('[YooKassa] Create payment failed:', response.status, errorBody);
+    const safeError = sanitizeLogText(errorBody);
+    console.error(`[YooKassa] Create payment failed (HTTP ${response.status}):`, safeError);
     throw new HttpError(
       502,
       `Ошибка создания платежа в ЮKassa (HTTP ${response.status}). Проверьте настройки магазина.`
@@ -129,11 +160,13 @@ export async function createYooKassaPayment(params: {
   return parseAndValidatePaymentResponse(rawJson);
 }
 
-export async function fetchYooKassaPayment(externalPaymentId: string): Promise<YooKassaPaymentResponse> {
+export async function fetchYooKassaPayment(
+  externalPaymentId: string
+): Promise<YooKassaPaymentResponse> {
   const authHeader = getAuthHeader();
   const cleanId = externalPaymentId.trim();
 
-  if (!EXTERNAL_PAYMENT_ID_REGEX.test(cleanId)) {
+  if (!isValidIdentifierString(cleanId, 8, 128)) {
     throw new HttpError(400, 'Некорректный идентификатор платежа ЮKassa');
   }
 
@@ -150,8 +183,12 @@ export async function fetchYooKassaPayment(externalPaymentId: string): Promise<Y
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error('[YooKassa] Fetch payment failed:', response.status, errorBody);
-    throw new HttpError(502, `Не удалось проверить статус платежа в ЮKassa (HTTP ${response.status})`);
+    const safeError = sanitizeLogText(errorBody);
+    console.error(`[YooKassa] Fetch payment failed (HTTP ${response.status}):`, safeError);
+    throw new HttpError(
+      502,
+      `Не удалось проверить статус платежа в ЮKassa (HTTP ${response.status})`
+    );
   }
 
   const rawJson = (await response.json()) as unknown;

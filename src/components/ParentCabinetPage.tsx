@@ -46,10 +46,15 @@ import {
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 function isSafeHttpUrl(rawUrl: string | null | undefined): boolean {
-  if (!rawUrl) return false;
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  const trimmed = rawUrl.trim();
   try {
-    const parsed = new URL(rawUrl, window.location.origin);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    const parsed = new URL(trimmed, window.location.origin);
+    const isHttps = parsed.protocol === 'https:';
+    const isLocalHttp =
+      parsed.protocol === 'http:' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    return isHttps || isLocalHttp;
   } catch {
     return false;
   }

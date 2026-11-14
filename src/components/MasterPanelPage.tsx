@@ -57,34 +57,16 @@ interface MasterPanelPageProps {
 
 type MasterTab = 'schedule' | 'grid' | 'families' | 'payments' | 'settings';
 
-const MASTER_SESSION_STORAGE_KEY = 'yasna_master_session_token';
-
-function readStoredMasterSession(): string | null {
+function isSafeReceiptUrl(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  const trimmed = rawUrl.trim();
   try {
-    return sessionStorage.getItem(MASTER_SESSION_STORAGE_KEY);
-  } catch (err) {
-    console.warn('[MasterPanel] Ошибка чтения sessionStorage:', err);
-    return null;
-  }
-}
-
-function writeStoredMasterSession(token: string | null): void {
-  try {
-    if (token) {
-      sessionStorage.setItem(MASTER_SESSION_STORAGE_KEY, token);
-    } else {
-      sessionStorage.removeItem(MASTER_SESSION_STORAGE_KEY);
-    }
-  } catch (err) {
-    console.warn('[MasterPanel] Ошибка записи в sessionStorage:', err);
-  }
-}
-
-function isSafeHttpUrl(rawUrl: string | null | undefined): boolean {
-  if (!rawUrl) return false;
-  try {
-    const parsed = new URL(rawUrl, window.location.origin);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    const parsed = new URL(trimmed, window.location.origin);
+    const isHttps = parsed.protocol === 'https:';
+    const isLocalHttp =
+      parsed.protocol === 'http:' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    return isHttps || isLocalHttp;
   } catch {
     return false;
   }
@@ -192,14 +174,13 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   );
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
 
-  const [sessionToken, setSessionToken] = useState<string | null>(readStoredMasterSession);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
 
   const masterFetch = useCallback(
     (input: string, init: RequestInit = {}) => {
       const headers = new Headers(init.headers);
-      const activeToken = sessionToken ?? readStoredMasterSession();
-      if (activeToken) {
-        headers.set('Authorization', `Bearer ${activeToken}`);
+      if (sessionToken) {
+        headers.set('Authorization', `Bearer ${sessionToken}`);
       }
       return fetch(input, {
         ...init,
@@ -224,7 +205,6 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     try {
       const res = await masterFetch('/api/master/dashboard');
       if (res.status === 401) {
-        writeStoredMasterSession(null);
         setSessionToken(null);
         setAuthenticated(false);
         setData(null);
@@ -272,7 +252,6 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         if (body.authenticated) {
           await loadDashboard();
         } else {
-          writeStoredMasterSession(null);
           setSessionToken(null);
         }
       } catch (err) {
@@ -300,7 +279,6 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         return;
       }
       if (body.session_token) {
-        writeStoredMasterSession(body.session_token);
         setSessionToken(body.session_token);
       }
       setPassword('');
@@ -316,7 +294,6 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
 
   const handleLogout = async () => {
     await masterFetch('/api/master/logout', { method: 'POST' });
-    writeStoredMasterSession(null);
     setSessionToken(null);
     setAuthenticated(false);
     setData(null);
@@ -919,7 +896,6 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         return;
       }
       if (body.session_token) {
-        writeStoredMasterSession(body.session_token);
         setSessionToken(body.session_token);
       }
       setCurrentPasswordInput('');
@@ -2333,7 +2309,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2">
-                            {p.receipt_url && isSafeHttpUrl(p.receipt_url) && (
+                            {p.receipt_url && isSafeReceiptUrl(p.receipt_url) && (
                               <a
                                 href={p.receipt_url}
                                 target="_blank"
@@ -3079,7 +3055,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <a
-                  href={previewReceipt.blobUrl}
+                  href={previewReceipt.blobUrl.startsWith('blob:') ? previewReceipt.blobUrl : '#'}
                   download={previewReceipt.name}
                   className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]"
                 >

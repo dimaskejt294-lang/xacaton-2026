@@ -1,6 +1,26 @@
+function sanitizeBase64Url(rawKey: unknown): string {
+  if (typeof rawKey !== 'string') return '';
+  const trimmed = rawKey.trim();
+  if (trimmed.length < 60 || trimmed.length > 120) return '';
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const code = trimmed.charCodeAt(i);
+    const isAlphanumeric =
+      (code >= 48 && code <= 57) || // 0-9
+      (code >= 65 && code <= 90) || // A-Z
+      (code >= 97 && code <= 122); // a-z
+    const isSpecial = code === 45 || code === 95; // - or _
+    if (!isAlphanumeric && !isSpecial) return '';
+  }
+  return trimmed;
+}
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const sanitized = sanitizeBase64Url(base64String);
+  if (!sanitized) {
+    throw new Error('Некорректный формат VAPID-ключа');
+  }
+  const padding = '='.repeat((4 - (sanitized.length % 4)) % 4);
+  const base64 = (sanitized + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const buffer = new ArrayBuffer(rawData.length);
   const outputArray = new Uint8Array(buffer);
@@ -10,73 +30,63 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   return outputArray;
 }
 
-function generateSecureCorrelationId(): string {
-  if (typeof window !== 'undefined' && window.crypto) {
-    if (typeof window.crypto.randomUUID === 'function') {
-      return window.crypto.randomUUID();
-    }
-    const bytes = new Uint8Array(16);
-    window.crypto.getRandomValues(bytes);
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  throw new Error('Web Crypto API недоступен в текущем окружении');
-}
-
 let cachedClientVapidKey: string | null = null;
 
-function getEnvVapidPublicKey(): string {
-  const raw = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  return typeof raw === 'string' ? raw.trim() : '';
-}
-
-function isValidVapidPublicKey(key: string): boolean {
-  return typeof key === 'string' && /^[A-Za-z0-9_-]{60,120}$/.test(key.trim());
+export function getClientVapidPublicKey(): string {
+  const envKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  const sanitized = sanitizeBase64Url(envKey);
+  if (sanitized) {
+    return sanitized;
+  }
+  return '';
 }
 
 export async function fetchServerVapidPublicKey(
   token?: string | null
 ): Promise<{ publicKey?: string; error?: string }> {
-  if (cachedClientVapidKey && isValidVapidPublicKey(cachedClientVapidKey)) {
+  if (cachedClientVapidKey) {
     return { publicKey: cachedClientVapidKey };
   }
 
-  const envKey = getEnvVapidPublicKey();
-  if (envKey && isValidVapidPublicKey(envKey)) {
+  // 1. Environment variable (import.meta.env.VITE_VAPID_PUBLIC_KEY)
+  const envKey = getClientVapidPublicKey();
+  if (envKey) {
     cachedClientVapidKey = envKey;
     return { publicKey: envKey };
   }
 
-  // 1. Primary: query public /api/push/vapid-public-key endpoint
+  // 2. Fetch from server endpoint if not set in client env
   try {
-    const res = await fetch('/api/push/vapid-public-key', {
-      headers: { 'X-Request-Id': generateSecureCorrelationId() },
-    });
+    const res = await fetch('/api/push/vapid-public-key');
     if (res.ok) {
       const data = (await res.json().catch(() => ({}))) as { publicKey?: string };
-      if (data.publicKey && isValidVapidPublicKey(data.publicKey)) {
-        cachedClientVapidKey = data.publicKey.trim();
-        return { publicKey: cachedClientVapidKey };
+      const validKey = sanitizeBase64Url(data.publicKey);
+      if (validKey) {
+        cachedClientVapidKey = validKey;
+        return { publicKey: validKey };
       }
     }
   } catch (err) {
     console.warn('[PushClient] Ошибка обращения к /api/push/vapid-public-key:', err);
   }
 
-  // 2. Secondary fallback: query family token endpoint if token is provided
+  // 3. Fallback to family token endpoint if token provided
   if (token) {
-    try {
-      const tokenRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`, {
-        headers: { 'X-Request-Id': generateSecureCorrelationId() },
-      });
-      if (tokenRes.ok) {
-        const data = (await tokenRes.json().catch(() => ({}))) as { publicKey?: string };
-        if (data.publicKey && isValidVapidPublicKey(data.publicKey)) {
-          cachedClientVapidKey = data.publicKey.trim();
-          return { publicKey: cachedClientVapidKey };
+    const safeToken = sanitizeBase64Url(token);
+    if (safeToken) {
+      try {
+        const tokenRes = await fetch(`/api/lk/${encodeURIComponent(safeToken)}/push/vapid-public-key`);
+        if (tokenRes.ok) {
+          const data = (await tokenRes.json().catch(() => ({}))) as { publicKey?: string };
+          const validKey = sanitizeBase64Url(data.publicKey);
+          if (validKey) {
+            cachedClientVapidKey = validKey;
+            return { publicKey: validKey };
+          }
         }
+      } catch (err) {
+        console.warn('[PushClient] Ошибка обращения к эндпоинту ЛК:', err);
       }
-    } catch (err) {
-      console.warn('[PushClient] Ошибка обращения к эндпоинту ЛК:', err);
     }
   }
 
@@ -158,12 +168,19 @@ export async function subscribeFamilyPush(
       };
     }
 
+    const safeToken = sanitizeBase64Url(token);
+    if (!safeToken) {
+      return {
+        ok: false,
+        message: 'Некорректный формат токена доступа семьи',
+      };
+    }
+
     const subJson = subscription.toJSON();
-    const subRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/subscribe`, {
+    const subRes = await fetch(`/api/lk/${encodeURIComponent(safeToken)}/push/subscribe`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Request-Id': generateSecureCorrelationId(),
       },
       body: JSON.stringify({
         endpoint: subJson.endpoint,
