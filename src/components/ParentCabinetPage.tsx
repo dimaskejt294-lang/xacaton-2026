@@ -39,19 +39,11 @@ import {
   pluralizeLessons,
   pluralizeYears,
 } from '../utils/format.ts';
+import {
+  getDevicePushStatus,
+  subscribeFamilyPush,
+} from '../utils/pushClient.ts';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const buffer = new ArrayBuffer(rawData.length);
-  const outputArray = new Uint8Array(buffer);
-  for (let i = 0; i < rawData.length; i += 1) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
 
 interface ParentCabinetPageProps {
   token: string;
@@ -101,23 +93,11 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
   const allConsentsChecked = acceptedOffer && acceptedPersonalData && acceptedPrivacy;
 
   useEffect(() => {
-    const supported =
-      typeof window !== 'undefined' &&
-      'Notification' in window &&
-      'serviceWorker' in navigator &&
-      'PushManager' in window;
-    setPushSupported(supported);
-    if (!supported) return;
-
-    setPushPermission(Notification.permission);
-    void navigator.serviceWorker.ready
-      .then((reg) => reg.pushManager.getSubscription())
-      .then((sub) => {
-        setPushSubscribedOnDevice(Boolean(sub));
-      })
-      .catch(() => {
-        setPushSubscribedOnDevice(false);
-      });
+    void getDevicePushStatus().then((status) => {
+      setPushSupported(status.supported);
+      setPushPermission(status.permission);
+      setPushSubscribedOnDevice(status.subscribed);
+    });
   }, [token]);
 
   const loadCabinet = useCallback(async () => {
@@ -428,76 +408,19 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
 
   const handleEnablePush = async () => {
     setBanner(null);
-    if (!pushSupported) {
-      setBanner({
-        type: 'error',
-        text: 'Этот браузер не поддерживает push-уведомления. На iPhone сначала закрепите сайт на экран «Домой» в Safari и откройте иконку.',
-      });
-      return;
-    }
-
     setPushBusy(true);
     try {
-      const permission = await Notification.requestPermission();
-      setPushPermission(permission);
-      if (permission !== 'granted') {
-        setBanner({
-          type: 'error',
-          text: 'Доступ к уведомлениям отклонён в настройках браузера. Разрешите уведомления для «Ясна» и попробуйте снова.',
-        });
+      const result = await subscribeFamilyPush(token);
+      if ('Notification' in window) {
+        setPushPermission(Notification.permission);
+      }
+      if (!result.ok) {
+        setBanner({ type: 'error', text: result.message });
         return;
       }
-
-      const keyRes = await fetch(
-        `/api/lk/${encodeURIComponent(token)}/push/vapid-public-key`
-      );
-      const keyBody = (await keyRes.json()) as { publicKey?: string; error?: string };
-      if (!keyRes.ok || !keyBody.publicKey) {
-        setBanner({
-          type: 'error',
-          text: keyBody.error || 'Не удалось получить ключ push-сервера',
-        });
-        return;
-      }
-
-      const registration = await navigator.serviceWorker.ready;
-      let subscription = await registration.pushManager.getSubscription();
-      if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(keyBody.publicKey),
-        });
-      }
-
-      const subJson = subscription.toJSON();
-      const subRes = await fetch(`/api/lk/${encodeURIComponent(token)}/push/subscribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          endpoint: subJson.endpoint,
-          keys: subJson.keys,
-        }),
-      });
-      if (!subRes.ok) {
-        const errBody = (await subRes.json().catch(() => ({}))) as { error?: string };
-        setBanner({
-          type: 'error',
-          text: errBody.error || 'Не удалось зарегистрировать устройство для уведомлений',
-        });
-        return;
-      }
-
       setPushSubscribedOnDevice(true);
-      setBanner({
-        type: 'success',
-        text: 'Уведомления на это устройство включены: будут приходить чеки об оплате, подтверждения записи и напоминания перед занятиями.',
-      });
+      setBanner({ type: 'success', text: result.message });
       await loadCabinet();
-    } catch {
-      setBanner({
-        type: 'error',
-        text: 'Не удалось включить push-уведомления. Убедитесь, что сайт открыт по HTTPS или на экране «Домой».',
-      });
     } finally {
       setPushBusy(false);
     }
@@ -642,7 +565,15 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <PWAInstallButton variant="cabinet" />
+          <PWAInstallButton
+            variant="cabinet"
+            familyToken={token}
+            onPushEnabled={() => {
+              setPushSubscribedOnDevice(true);
+              setPushPermission('granted');
+              void loadCabinet();
+            }}
+          />
 
           {!pushSubscribedOnDevice && (
             <button
@@ -1666,7 +1597,15 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <PWAInstallButton variant="cabinet" />
+                    <PWAInstallButton
+                      variant="cabinet"
+                      familyToken={token}
+                      onPushEnabled={() => {
+                        setPushSubscribedOnDevice(true);
+                        setPushPermission('granted');
+                        void loadCabinet();
+                      }}
+                    />
                     {pushSubscribedOnDevice ? (
                       <>
                         <button

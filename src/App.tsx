@@ -5,6 +5,7 @@ import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { ParentCabinetPage } from './components/ParentCabinetPage.tsx';
 import { PublicSchedulePage } from './components/PublicSchedulePage.tsx';
 import { TopNav, type ActiveView } from './components/TopNav.tsx';
+import { applyTheme, getInitialTheme, type ThemeMode } from './utils/theme.ts';
 
 const STORAGE_KEY_FAMILY_TOKEN = 'yasna_active_family_token';
 
@@ -34,6 +35,7 @@ function parseRoute(pathname: string): {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [savedFamilyToken, setSavedFamilyToken] = useState<string | null>(readSavedToken);
   const [pathname, setPathname] = useState<string>(() => {
     const initialPath = window.location.pathname;
@@ -77,15 +79,25 @@ export default function App() {
     }
   }, []);
 
+  const handleToggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next: ThemeMode = prev === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      return next;
+    });
+  }, []);
+
   const route = parseRoute(pathname);
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen bg-[#F5F6F8] text-[#111827]">
+      <div className="min-h-screen bg-[#F5F6F8] text-[#111827] transition-colors duration-200">
         <TopNav
           activeView={route.view}
           onNavigate={navigate}
           savedFamilyToken={savedFamilyToken}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
         />
 
         <main>

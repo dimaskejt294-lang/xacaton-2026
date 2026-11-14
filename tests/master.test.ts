@@ -432,4 +432,35 @@ describe('Master routes: tariffs, direct subscriptions & lesson editing', () => 
     expect(pubBody.settings.hero_groups_text).toBe('до 6 мест');
     expect(pubBody.settings.show_hero_free_cancel).toBe(0);
   });
+
+  it('broadcasts a test notification to all families from master panel', async () => {
+    const db = getDb();
+    const totalFamilies = (db.prepare('SELECT COUNT(*) AS cnt FROM families').get() as { cnt: number }).cnt;
+    expect(totalFamilies).toBeGreaterThanOrEqual(2);
+
+    const res = await fetch(`${baseUrl}/api/master/notifications/broadcast`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({
+        title: 'Общая проверка связи',
+        message: 'Тестовое уведомление для всех родителей мастерской.',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      families_count: number;
+      push_sent: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.families_count).toBe(totalFamilies);
+
+    const rows = db
+      .prepare("SELECT COUNT(*) AS cnt FROM notifications WHERE title = 'Общая проверка связи'")
+      .get() as { cnt: number };
+    expect(rows.cnt).toBe(totalFamilies);
+  });
 });

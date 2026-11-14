@@ -6,7 +6,8 @@ export function createNotification(
   familyId: number,
   title: string,
   message: string,
-  dbOverride?: DatabaseSync
+  dbOverride?: DatabaseSync,
+  options?: { skipPush?: boolean }
 ): number {
   const db = dbOverride ?? getDb();
   const now = new Date().toISOString();
@@ -19,17 +20,19 @@ export function createNotification(
   const notificationId = Number(result.lastInsertRowid);
 
   // Only schedule async Web Push if the family actually has at least one registered device
-  const hasPush = db
-    .prepare('SELECT 1 FROM push_subscriptions WHERE family_id = ? LIMIT 1')
-    .get(familyId);
-  if (hasPush) {
-    setImmediate(() => {
-      void sendPushToFamily(familyId, {
-        title,
-        body: message,
-        tag: `yasna-notif-${notificationId}`,
-      }).catch(() => {});
-    });
+  if (!options?.skipPush) {
+    const hasPush = db
+      .prepare('SELECT 1 FROM push_subscriptions WHERE family_id = ? LIMIT 1')
+      .get(familyId);
+    if (hasPush) {
+      setImmediate(() => {
+        void sendPushToFamily(familyId, {
+          title,
+          body: message,
+          tag: `yasna-notif-${notificationId}`,
+        }).catch(() => {});
+      });
+    }
   }
 
   return notificationId;

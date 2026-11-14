@@ -1,6 +1,7 @@
-import { Hammer, Menu, X } from 'lucide-react';
+import { Hammer, Menu, Moon, Sun, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useState } from 'react';
+import type { ThemeMode } from '../utils/theme.ts';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 export type ActiveView = 'schedule' | 'parent' | 'master';
@@ -9,9 +10,17 @@ interface TopNavProps {
   activeView: ActiveView;
   onNavigate: (path: string) => void;
   savedFamilyToken: string | null;
+  theme: ThemeMode;
+  onToggleTheme: () => void;
 }
 
-export const TopNav: React.FC<TopNavProps> = ({ activeView, onNavigate, savedFamilyToken }) => {
+export const TopNav: React.FC<TopNavProps> = ({
+  activeView,
+  onNavigate,
+  savedFamilyToken,
+  theme,
+  onToggleTheme,
+}) => {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleLink = (path: string) => {
@@ -96,7 +105,7 @@ export const TopNav: React.FC<TopNavProps> = ({ activeView, onNavigate, savedFam
 
         {/* Zone 3: Primary Action */}
         <div className="flex shrink-0 items-center gap-2">
-          <PWAInstallButton variant="nav" />
+          <PWAInstallButton variant="nav" familyToken={savedFamilyToken} />
 
           <button
             type="button"
@@ -125,6 +134,20 @@ export const TopNav: React.FC<TopNavProps> = ({ activeView, onNavigate, savedFam
             className="inline-flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#111827] md:hidden"
           >
             {mobileOpen ? <X className="h-5 w-5" strokeWidth={1.5} /> : <Menu className="h-5 w-5" strokeWidth={1.5} />}
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+            title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
+            className="inline-flex min-h-[40px] min-w-[40px] shrink-0 cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] text-[#111827] transition-colors hover:bg-[#F3F4F6]"
+          >
+            {theme === 'dark' ? (
+              <Sun className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+            ) : (
+              <Moon className="h-4 w-4 text-[#6B7280]" strokeWidth={1.75} />
+            )}
           </button>
         </div>
       </div>

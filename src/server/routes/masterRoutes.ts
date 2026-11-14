@@ -37,6 +37,7 @@ import {
   updateLegalDocumentText,
 } from '../services/legalService.ts';
 import { createNotification } from '../services/notificationService.ts';
+import { sendPushToFamily } from '../services/pushService.ts';
 import {
   attachReceiptFile,
   attachReceiptUrl,
@@ -1293,6 +1294,66 @@ masterRouter.delete('/legal-documents/:docKey/file', (req, res, next) => {
     const docKey = parseLegalDocKey(req.params.docKey);
     deleteLegalDocumentFile(docKey);
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+masterRouter.post('/notifications/broadcast', async (req, res, next) => {
+  try {
+    const rawTitle = String(req.body?.title ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim();
+    const rawMessage = String(req.body?.message ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim();
+
+    const title = rawTitle || 'Тестовое уведомление от мастерской «Ясна»';
+    const message =
+      rawMessage ||
+      'Проверка связи! Сюда приходят напоминания о занятиях, чеки об оплате и отметки посещаемости.';
+
+    if (title.length > 120) {
+      throw new HttpError(400, 'Заголовок уведомления не должен превышать 120 символов');
+    }
+    if (message.length > 1000) {
+      throw new HttpError(400, 'Текст уведомления не должен превышать 1000 символов');
+    }
+
+    const db = getDb();
+    const families = db
+      .prepare('SELECT id, access_token FROM families ORDER BY id ASC')
+      .all() as Array<{ id: number; access_token: string }>;
+
+    runInTransaction((tx) => {
+      for (const fam of families) {
+        createNotification(fam.id, title, message, tx, { skipPush: true });
+      }
+    });
+
+    let pushSent = 0;
+    let pushRemoved = 0;
+    const deliveries = await Promise.all(
+      families.map((fam) =>
+        sendPushToFamily(fam.id, {
+          title,
+          body: message,
+          url: `/lk/${encodeURIComponent(fam.access_token)}`,
+          tag: 'yasna-broadcast-test',
+        })
+      )
+    );
+    for (const d of deliveries) {
+      pushSent += d.sent;
+      pushRemoved += d.removed;
+    }
+
+    res.json({
+      ok: true,
+      families_count: families.length,
+      push_sent: pushSent,
+      push_removed: pushRemoved,
+    });
   } catch (err) {
     next(err);
   }

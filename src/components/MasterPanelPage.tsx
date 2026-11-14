@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Bell,
+  BellRing,
   Calendar,
   CheckCircle2,
   Copy,
@@ -176,6 +177,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
+
+  // Broadcast test notification state
+  const [broadcastTitle, setBroadcastTitle] = useState(
+    'Тестовое уведомление от мастерской «Ясна»'
+  );
+  const [broadcastMessage, setBroadcastMessage] = useState(
+    'Проверка связи! Сюда приходят напоминания о занятиях, чеки об оплате и отметки посещаемости.'
+  );
+  const [sendingBroadcast, setSendingBroadcast] = useState(false);
 
   const [sessionToken, setSessionToken] = useState<string | null>(readStoredMasterSession);
 
@@ -768,6 +778,47 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     }
     setBanner({ type: 'success', text: 'Отзыв удалён.' });
     await loadDashboard();
+  };
+
+  const handleBroadcastNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBanner(null);
+    setSendingBroadcast(true);
+    try {
+      const res = await masterFetch('/api/master/notifications/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: broadcastTitle,
+          message: broadcastMessage,
+        }),
+      });
+      const body = (await res.json()) as {
+        families_count?: number;
+        push_sent?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        setBanner({
+          type: 'error',
+          text: body.error || 'Не удалось отправить уведомление семьям',
+        });
+        return;
+      }
+      setBanner({
+        type: 'success',
+        text: `Уведомление отправлено в кабинеты всех семей (${
+          body.families_count ?? 0
+        }), push-доставка на устройства: ${body.push_sent ?? 0}.`,
+      });
+    } catch {
+      setBanner({
+        type: 'error',
+        text: 'Ошибка сети при рассылке уведомления',
+      });
+    } finally {
+      setSendingBroadcast(false);
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -2580,6 +2631,61 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-5 text-sm font-medium text-white shadow-sm hover:bg-[#B05B20] disabled:opacity-60"
                         >
                           {changingPassword ? 'Сохранение...' : 'Обновить пароль'}
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* Broadcast Test Notification to All Families */}
+                    <form
+                      onSubmit={handleBroadcastNotification}
+                      className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+                    >
+                      <div className="flex items-center gap-2">
+                        <BellRing className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+                        <h3 className="font-display text-base font-semibold text-[#111827]">
+                          Тестовое уведомление всем семьям
+                        </h3>
+                      </div>
+                      <p className="mt-1 text-xs text-[#6B7280]">
+                        Отправит уведомление в личный кабинет каждой семьи ({data.families.length})
+                        и push на все подключённые телефоны и компьютеры.
+                      </p>
+                      <div className="mt-4 space-y-3">
+                        <div>
+                          <label className="block text-xs font-medium text-[#6B7280]">
+                            Заголовок
+                          </label>
+                          <input
+                            type="text"
+                            maxLength={120}
+                            value={broadcastTitle}
+                            onChange={(e) => setBroadcastTitle(e.target.value)}
+                            className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-[#6B7280]">
+                            Текст уведомления
+                          </label>
+                          <textarea
+                            rows={2}
+                            maxLength={1000}
+                            value={broadcastMessage}
+                            onChange={(e) => setBroadcastMessage(e.target.value)}
+                            className="mt-1 w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={sendingBroadcast}
+                          className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-[#C86D2D] px-5 text-sm font-medium text-white shadow-sm hover:bg-[#B05B20] disabled:opacity-60"
+                        >
+                          <BellRing className="h-4 w-4" strokeWidth={1.75} />
+                          <span>
+                            {sendingBroadcast
+                              ? 'Отправка...'
+                              : 'Отправить тестовое уведомление всем'}
+                          </span>
                         </button>
                       </div>
                     </form>
