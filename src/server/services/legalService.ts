@@ -74,8 +74,14 @@ export function getLegalUploadsDir(): string {
 }
 
 export function parseLegalDocKey(raw: string): LegalDocKey {
-  if (raw === 'offer' || raw === 'personal_data' || raw === 'privacy') {
-    return raw;
+  if (raw === 'offer') {
+    return 'offer';
+  }
+  if (raw === 'personal_data' || raw === 'personal_data_consent') {
+    return 'personal_data';
+  }
+  if (raw === 'privacy' || raw === 'privacy_policy') {
+    return 'privacy';
   }
   throw new HttpError(400, 'Неизвестный тип документа');
 }

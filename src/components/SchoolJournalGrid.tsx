@@ -8,6 +8,7 @@ interface SchoolJournalGridProps {
   families: MasterFamily[];
   onMarkStatus: (bookingId: number, status: BookingStatus, reason?: string) => Promise<void>;
   onEnrollChild: (lessonId: number, childId: number) => Promise<void>;
+  onSelectStudent?: (familyId: number, childId?: number) => void;
 }
 
 interface StudentRow {
@@ -67,6 +68,7 @@ export const SchoolJournalGrid: React.FC<SchoolJournalGridProps> = ({
   families,
   onMarkStatus,
   onEnrollChild,
+  onSelectStudent,
 }) => {
   const [search, setSearch] = useState('');
   const [showCanceledLessons, setShowCanceledLessons] = useState(false);
@@ -165,8 +167,7 @@ export const SchoolJournalGrid: React.FC<SchoolJournalGridProps> = ({
               </h2>
             </div>
             <p className="mt-0.5 text-xs text-[#6B7280]">
-              Строки — ученики, столбцы — занятия по датам. Нажмите на любую клеточку для отметки
-              посещения или записи.
+              Строки — ученики, столбцы — занятия по датам. Нажмите на имя ученика для открытия карточки или на клеточку для отметки посещения.
             </p>
           </div>
 
@@ -320,15 +321,6 @@ export const SchoolJournalGrid: React.FC<SchoolJournalGridProps> = ({
                 <span className="text-xs font-medium text-[#991B1B]">
                   Занятие отменено — запись невозможна.
                 </span>
-              ) : new Date(activeSelection.lesson.start_time).getTime() <= Date.now() ? (
-                <span className="text-xs font-medium text-[#6B7280]">
-                  Занятие уже прошло — запись через журнал недоступна.
-                </span>
-              ) : activeSelection.lesson.free_spots === 0 ? (
-                <span className="text-xs font-medium text-[#92400E]">
-                  Свободных мест на занятии нет ({activeSelection.lesson.booked_count} из{' '}
-                  {activeSelection.lesson.capacity}).
-                </span>
               ) : (
                 <button
                   type="button"
@@ -339,7 +331,9 @@ export const SchoolJournalGrid: React.FC<SchoolJournalGridProps> = ({
                   className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-4 text-xs font-medium text-white shadow-sm hover:bg-[#B05B20] disabled:opacity-60"
                 >
                   <CalendarPlus className="h-4 w-4" strokeWidth={1.5} />
-                  Записать ученика на занятие (свободно {activeSelection.lesson.free_spots})
+                  {activeSelection.lesson.free_spots > 0
+                    ? `Записать ученика на занятие (свободно ${activeSelection.lesson.free_spots})`
+                    : `Записать ученика сверх лимита (${activeSelection.lesson.booked_count} из ${activeSelection.lesson.capacity})`}
                 </button>
               )}
             </div>
@@ -415,16 +409,23 @@ export const SchoolJournalGrid: React.FC<SchoolJournalGridProps> = ({
                 return (
                   <tr key={student.childId} className="hover:bg-[#FAFAFA]">
                     <td className="sticky left-0 z-10 border-r border-[#E5E7EB] bg-white px-4 py-2.5">
-                      <div className="text-sm font-semibold text-[#111827]">
-                        <span className="mr-1.5 text-xs font-normal text-[#9CA3AF] tabular-nums">
-                          {index + 1}.
-                        </span>
-                        {student.childName}{' '}
-                        <span className="text-xs font-normal text-[#6B7280]">
-                          ({pluralizeYears(student.childAge)})
-                        </span>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-[#6B7280]">{student.parentName}</div>
+                      <button
+                        type="button"
+                        onClick={() => onSelectStudent?.(student.familyId, student.childId)}
+                        title="Открыть карточку ученика"
+                        className="group cursor-pointer text-left"
+                      >
+                        <div className="text-sm font-semibold text-[#111827] group-hover:text-[#C86D2D] group-hover:underline">
+                          <span className="mr-1.5 text-xs font-normal text-[#9CA3AF] tabular-nums">
+                            {index + 1}.
+                          </span>
+                          {student.childName}{' '}
+                          <span className="text-xs font-normal text-[#6B7280]">
+                            ({pluralizeYears(student.childAge)})
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-[#6B7280]">{student.parentName}</div>
+                      </button>
                     </td>
 
                     {sortedLessons.map((lesson) => {

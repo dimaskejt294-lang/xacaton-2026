@@ -36,6 +36,7 @@ interface ScheduleCalendarViewProps {
   onEditLesson: (lesson: MasterLesson) => void;
   onCancelLesson: (lessonId: number) => Promise<void>;
   onCreateLessonOnDate: (dateKey: string) => void;
+  onSelectStudent?: (familyId: number, childId?: number) => void;
 }
 
 type CalendarMode = 'month' | 'week';
@@ -124,6 +125,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   onEditLesson,
   onCancelLesson,
   onCreateLessonOnDate,
+  onSelectStudent,
 }) => {
   const todayKey = useMemo(() => toSurgutDateKey(new Date()), []);
   const [calendarMode, setCalendarMode] = useState<CalendarMode>('month');
@@ -295,6 +297,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   const allChildren = useMemo(() => {
     const items: Array<{
       id: number;
+      familyId: number;
       name: string;
       age: number;
       parentName: string;
@@ -305,6 +308,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
       for (const child of fam.children) {
         items.push({
           id: child.id,
+          familyId: fam.id,
           name: child.name,
           age: child.age,
           parentName: fam.parent_name,
@@ -1057,9 +1061,14 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
 
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-semibold text-[#111827]">
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectStudent?.(b.family_id, b.child_id)}
+                                    title="Нажмите, чтобы открыть карточку ученика (ФИО, возраст, почта, MAX, ссылка для входа)"
+                                    className="cursor-pointer text-left font-semibold text-[#111827] hover:text-[#C86D2D] hover:underline"
+                                  >
                                     {b.child_name} ({pluralizeYears(b.child_age)})
-                                  </span>
+                                  </button>
                                   <span
                                     className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${bookingStatusClasses(
                                       b.status
@@ -1073,14 +1082,30 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                                     </span>
                                   )}
                                 </div>
-                                <div className="mt-0.5 text-xs text-[#6B7280] tabular-nums">
-                                  {b.parent_name} · {b.phone} ·{' '}
-                                  {b.is_charged ? 'Списано' : 'Не списано'}
+                                <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-[#6B7280] tabular-nums">
+                                  <span>{b.parent_name}</span>
+                                  <span>·</span>
+                                  <span>{b.phone}</span>
+                                  {b.max_contact && (
+                                    <>
+                                      <span>·</span>
+                                      <span className="font-medium text-[#C86D2D]">MAX: {b.max_contact}</span>
+                                    </>
+                                  )}
+                                  <span>·</span>
+                                  <span>{b.is_charged ? 'Списано' : 'Не списано'}</span>
                                 </div>
                               </div>
                             </div>
 
                             <div className="flex flex-wrap items-center gap-1.5 pl-10 sm:pl-0">
+                              <button
+                                type="button"
+                                onClick={() => onSelectStudent?.(b.family_id, b.child_id)}
+                                className="min-h-[34px] cursor-pointer rounded-lg border border-[#C86D2D]/40 bg-[#FDF4ED] px-2.5 text-xs font-semibold text-[#C86D2D] hover:bg-[#FCE8D8]"
+                              >
+                                Карточка
+                              </button>
                               <button
                                 type="button"
                                 disabled={isBusy}
@@ -1119,9 +1144,13 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                             key={b.id}
                             className="flex items-center justify-between rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2"
                           >
-                            <span>
+                            <button
+                              type="button"
+                              onClick={() => onSelectStudent?.(b.family_id, b.child_id)}
+                              className="cursor-pointer text-left font-medium text-[#111827] hover:text-[#C86D2D] hover:underline"
+                            >
                               {b.child_name} ({b.parent_name})
-                            </span>
+                            </button>
                             <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px]">
                               Отмена
                             </span>
@@ -1135,10 +1164,9 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                 /* SUBTAB 2: UNENROLLED STUDENTS (with instant search + 1-click enroll) */
                 <div className="mt-3 space-y-3">
                   {selectedLesson.free_spots === 0 && (
-                    <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-2.5 text-xs text-[#991B1B]">
-                      Свободных мест нет ({selectedLesson.capacity} из {selectedLesson.capacity}).
-                      Чтобы записать кого-то из этого списка, нажмите «Редактировать» и увеличьте
-                      вместимость.
+                    <div className="rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3.5 py-2.5 text-xs text-[#92400E]">
+                      Основные места заняты ({selectedLesson.booked_count} из{' '}
+                      {selectedLesson.capacity}). Мастер может записать ученика сверх лимита группы.
                     </div>
                   )}
 
@@ -1166,20 +1194,24 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                     <div className="max-h-[300px] space-y-1.5 overflow-y-auto pr-1">
                       {filteredUnenrolledChildren.map((c) => {
                         const isEnrollingThis = enrollingChildId === c.id;
-                        const canEnroll =
-                          selectedLesson.is_canceled === 0 && selectedLesson.free_spots > 0;
+                        const canEnroll = selectedLesson.is_canceled === 0;
                         return (
                           <div
                             key={c.id}
                             className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2.5"
                           >
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-[#111827]">
+                              <button
+                                type="button"
+                                onClick={() => onSelectStudent?.(c.familyId, c.id)}
+                                title="Открыть карточку ученика"
+                                className="cursor-pointer text-left text-sm font-semibold text-[#111827] hover:text-[#C86D2D] hover:underline"
+                              >
                                 {c.name}{' '}
                                 <span className="text-xs font-normal text-[#6B7280]">
                                   ({pluralizeYears(c.age)})
                                 </span>
-                              </div>
+                              </button>
                               <div className="text-xs text-[#6B7280] tabular-nums">
                                 {c.parentName} · {c.phone} · Остаток:{' '}
                                 <strong
@@ -1192,17 +1224,30 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                               </div>
                             </div>
 
-                            {canEnroll && (
+                            <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
-                                disabled={isEnrollingThis}
-                                onClick={() => void handleQuickEnrollChild(c.id)}
-                                className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-lg bg-[#C86D2D] px-3 text-xs font-semibold text-white hover:bg-[#B05B20] disabled:opacity-50"
+                                onClick={() => onSelectStudent?.(c.familyId, c.id)}
+                                className="min-h-[36px] cursor-pointer rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
                               >
-                                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-                                {isEnrollingThis ? 'Запись...' : 'Записать'}
+                                Карточка
                               </button>
-                            )}
+                              {canEnroll && (
+                                <button
+                                  type="button"
+                                  disabled={isEnrollingThis}
+                                  onClick={() => void handleQuickEnrollChild(c.id)}
+                                  className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-lg bg-[#C86D2D] px-3 text-xs font-semibold text-white hover:bg-[#B05B20] disabled:opacity-50"
+                                >
+                                  <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                                  {isEnrollingThis
+                                    ? 'Запись...'
+                                    : selectedLesson.free_spots === 0
+                                      ? 'Записать сверх лимита'
+                                      : 'Записать'}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -1223,10 +1268,14 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
                         key={w.id}
                         className="flex flex-wrap items-center justify-between gap-2 text-xs"
                       >
-                        <span className="font-medium text-[#111827]">
+                        <button
+                          type="button"
+                          onClick={() => w.family_id && onSelectStudent?.(w.family_id, w.child_id)}
+                          className="cursor-pointer text-left font-medium text-[#111827] hover:text-[#C86D2D] hover:underline"
+                        >
                           {w.child_name} ({w.parent_name}, {w.phone})
-                        </span>
-                        {selectedLesson.free_spots > 0 && (
+                        </button>
+                        {selectedLesson.is_canceled === 0 && (
                           <button
                             type="button"
                             onClick={() => void onConvertWaitlist(w.id)}

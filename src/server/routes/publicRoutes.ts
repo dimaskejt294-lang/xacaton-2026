@@ -1,14 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
-import { getDb, HttpError } from '../db.ts';
-import { createRateLimiter, resolveFamilyByToken } from '../security.ts';
+import { getDb, HttpError, runInTransaction } from '../db.ts';
+import {
+  createRateLimiter,
+  generateAccessToken,
+  resolveFamilyByToken,
+  sanitizePlainText,
+} from '../security.ts';
 import {
   getLegalDocumentRow,
   getLegalUploadsDir,
   listLegalDocuments,
   parseLegalDocKey,
 } from '../services/legalService.ts';
+import { createNotification } from '../services/notificationService.ts';
 
 export const publicRouter = Router();
 
@@ -16,6 +22,12 @@ const resolveLinkLimiter = createRateLimiter({
   windowMs: 60 * 1000,
   maxRequests: 30,
   message: 'Слишком много попыток входа. Пожалуйста, подождите минуту.',
+});
+
+const registerLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 15,
+  message: 'Слишком много регистраций с одного устройства. Пожалуйста, подождите немного.',
 });
 
 publicRouter.get('/schedule', (_req, res, next) => {
@@ -77,6 +89,7 @@ publicRouter.get('/schedule', (_req, res, next) => {
       tariffs,
       settings,
       reviews,
+      legal_documents: listLegalDocuments(),
     });
   } catch (err) {
     next(err);
@@ -98,6 +111,57 @@ publicRouter.get('/resolve-link', resolveLinkLimiter, (req, res, next) => {
 
     const family = resolveFamilyByToken(token);
     res.json({ valid: true, token: family.access_token });
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicRouter.post('/register', registerLimiter, (req, res, next) => {
+  try {
+    if (req.body?.personal_data_consent !== true) {
+      throw new HttpError(400, 'Необходимо дать согласие на обработку персональных данных');
+    }
+    const fullName = sanitizePlainText(req.body?.full_name ?? req.body?.parent_name, 120) || 'Новый ученик';
+    const childName = sanitizePlainText(req.body?.child_name, 80) || fullName;
+    const phone = sanitizePlainText(req.body?.phone, 30) || 'Не указан';
+    const email = sanitizePlainText(req.body?.email, 120);
+    const maxContact = sanitizePlainText(req.body?.max_contact, 120);
+    const rawAge = req.body?.age !== undefined && req.body?.age !== '' ? Number(req.body.age) : 10;
+    const age = Number.isInteger(rawAge) && rawAge >= 3 && rawAge <= 99 ? rawAge : 10;
+
+    const created = runInTransaction((db) => {
+      const token = generateAccessToken();
+      const nowIso = new Date().toISOString();
+      const famRes = db
+        .prepare(
+          `INSERT INTO families (parent_name, phone, email, max_contact, access_token, money_balance, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?)`
+        )
+        .run(fullName, phone, email, maxContact, token, nowIso);
+      const familyId = Number(famRes.lastInsertRowid);
+
+      db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
+        familyId,
+        childName,
+        age,
+        null
+      );
+
+      createNotification(
+        familyId,
+        'Личный кабинет ученика создан',
+        'Добро пожаловать в мастерскую «Ясна»! Сохраните вашу персональную ссылку для входа и заполните анкету ученика (ФИО, телефон, почта, MAX и возраст) в разделе «Профиль ученика».',
+        db
+      );
+
+      return { familyId, token };
+    });
+
+    res.status(201).json({
+      ok: true,
+      family_id: created.familyId,
+      token: created.token,
+    });
   } catch (err) {
     next(err);
   }

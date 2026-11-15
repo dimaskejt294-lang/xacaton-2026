@@ -36,6 +36,8 @@ function initializeSchema(db: DatabaseSync): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       parent_name TEXT NOT NULL,
       phone TEXT NOT NULL,
+      email TEXT NOT NULL DEFAULT '',
+      max_contact TEXT NOT NULL DEFAULT '',
       access_token TEXT NOT NULL UNIQUE,
       money_balance REAL NOT NULL DEFAULT 0.0,
       created_at TEXT NOT NULL
@@ -47,7 +49,7 @@ function initializeSchema(db: DatabaseSync): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
-      age INTEGER NOT NULL CHECK(age >= 3 AND age <= 18),
+      age INTEGER NOT NULL CHECK(age >= 3 AND age <= 99),
       notes TEXT
     );
 
@@ -244,6 +246,38 @@ function initializeSchema(db: DatabaseSync): void {
   ensureSettingsCol('show_hero_groups', 'INTEGER NOT NULL DEFAULT 1');
   ensureSettingsCol('hero_groups_text', "TEXT NOT NULL DEFAULT '2–4 места'");
   ensureSettingsCol('show_hero_free_cancel', 'INTEGER NOT NULL DEFAULT 1');
+
+  const familyCols = db.prepare('PRAGMA table_info(families)').all() as Array<{ name: string }>;
+  if (!familyCols.some((c) => c.name === 'email')) {
+    db.exec("ALTER TABLE families ADD COLUMN email TEXT NOT NULL DEFAULT '';");
+  }
+  if (!familyCols.some((c) => c.name === 'max_contact')) {
+    db.exec("ALTER TABLE families ADD COLUMN max_contact TEXT NOT NULL DEFAULT '';");
+  }
+
+  const childrenTableSql = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'children'")
+    .get() as { sql: string } | undefined;
+  if (childrenTableSql && childrenTableSql.sql.includes('age <= 18')) {
+    db.exec('PRAGMA foreign_keys = OFF;');
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE children_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        age INTEGER NOT NULL CHECK(age >= 3 AND age <= 99),
+        notes TEXT
+      );
+      INSERT INTO children_new (id, family_id, name, age, notes)
+      SELECT id, family_id, name, age, notes FROM children;
+      DROP TABLE children;
+      ALTER TABLE children_new RENAME TO children;
+      CREATE INDEX IF NOT EXISTS idx_children_family_id ON children(family_id);
+      COMMIT;
+    `);
+    db.exec('PRAGMA foreign_keys = ON;');
+  }
 
   const lessonsTableSql = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lessons'")

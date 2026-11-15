@@ -200,6 +200,9 @@ parentRouter.get('/:token', parentReadLimiter, (req, res, next) => {
         id: family.id,
         parent_name: family.parent_name,
         phone: family.phone,
+        email: family.email,
+        max_contact: family.max_contact,
+        access_token: family.access_token,
         money_balance: family.money_balance,
       },
       children,
@@ -221,6 +224,78 @@ parentRouter.get('/:token', parentReadLimiter, (req, res, next) => {
         free_spots: Math.max(0, l.capacity - l.booked_count),
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+parentRouter.put('/:token/profile', parentActionLimiter, (req, res, next) => {
+  try {
+    const family = resolveFamilyByToken(req.params.token);
+    const fullName = String(req.body?.full_name ?? req.body?.parent_name ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim()
+      .slice(0, 120);
+    const childName = String(req.body?.child_name ?? fullName)
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim()
+      .slice(0, 80);
+    const phone = String(req.body?.phone ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim()
+      .slice(0, 30);
+    const email = String(req.body?.email ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim()
+      .slice(0, 120);
+    const maxContact = String(req.body?.max_contact ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim()
+      .slice(0, 120);
+    const age = Number(req.body?.age ?? 10);
+    const childId = req.body?.child_id ? Number(req.body.child_id) : null;
+
+    if (!fullName) {
+      throw new HttpError(400, 'Укажите ваше ФИО');
+    }
+    if (!phone || phone.length < 5) {
+      throw new HttpError(400, 'Укажите корректный номер телефона');
+    }
+    if (!Number.isInteger(age) || age < 3 || age > 99) {
+      throw new HttpError(400, 'Укажите корректный возраст ученика (от 3 до 99 лет)');
+    }
+
+    const db = getDb();
+    db.prepare(
+      'UPDATE families SET parent_name = ?, phone = ?, email = ?, max_contact = ? WHERE id = ?'
+    ).run(fullName, phone, email, maxContact, family.id);
+
+    const existingChildren = db
+      .prepare('SELECT id FROM children WHERE family_id = ? ORDER BY id ASC')
+      .all(family.id) as Array<{ id: number }>;
+
+    const targetChildId =
+      childId && existingChildren.some((c) => c.id === childId)
+        ? childId
+        : existingChildren[0]?.id ?? null;
+
+    if (targetChildId) {
+      db.prepare('UPDATE children SET name = ?, age = ? WHERE id = ? AND family_id = ?').run(
+        childName || fullName,
+        age,
+        targetChildId,
+        family.id
+      );
+    } else {
+      db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
+        family.id,
+        childName || fullName,
+        age,
+        null
+      );
+    }
+
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

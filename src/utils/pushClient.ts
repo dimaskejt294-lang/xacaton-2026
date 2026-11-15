@@ -35,11 +35,6 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 
 let cachedClientVapidKey: string | null = null;
 
-export function getClientVapidPublicKey(): string {
-  const envKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  return sanitizeBase64Url(envKey, 60, 120);
-}
-
 export async function fetchServerVapidPublicKey(): Promise<{
   publicKey?: string;
   error?: string;
@@ -48,14 +43,6 @@ export async function fetchServerVapidPublicKey(): Promise<{
     return { publicKey: cachedClientVapidKey };
   }
 
-  // 1. Environment variable (import.meta.env.VITE_VAPID_PUBLIC_KEY)
-  const envKey = getClientVapidPublicKey();
-  if (envKey) {
-    cachedClientVapidKey = envKey;
-    return { publicKey: envKey };
-  }
-
-  // 2. Fetch from static server endpoint (no user input in URL)
   try {
     const res = await fetch(VAPID_PUBLIC_KEY_ENDPOINT, {
       method: 'GET',
@@ -73,7 +60,7 @@ export async function fetchServerVapidPublicKey(): Promise<{
     console.warn('[PushClient] Ошибка обращения к серверу за VAPID-ключом:', err);
   }
 
-  return { error: 'Не удалось получить публичный VAPID-ключ для push-уведомлений' };
+  return { error: 'Не удалось получить публичный ключ сервера уведомлений' };
 }
 
 export function isPushSupported(): boolean {

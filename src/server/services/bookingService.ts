@@ -178,6 +178,7 @@ export function createBooking(params: {
   childId: number;
   isMakeup?: boolean;
   familyIdConstraint?: number;
+  allowOverCapacity?: boolean;
 }): { bookingId: number } {
   return runInTransaction((db) => {
     const lesson = db
@@ -226,7 +227,7 @@ export function createBooking(params: {
       )
       .get(lesson.id) as { cnt: number };
 
-    if (countRow.cnt >= lesson.capacity) {
+    if (!params.allowOverCapacity && countRow.cnt >= lesson.capacity) {
       throw new HttpError(409, 'Свободных мест в группе нет');
     }
 

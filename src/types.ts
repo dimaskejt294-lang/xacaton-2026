@@ -143,6 +143,9 @@ export interface ParentDashboardData {
     id: number;
     parent_name: string;
     phone: string;
+    email?: string;
+    max_contact?: string;
+    access_token?: string;
     money_balance: number;
   };
   children: ChildProfile[];
@@ -176,17 +179,25 @@ export interface MasterLessonBooking {
   family_id: number;
   parent_name: string;
   phone: string;
+  email?: string;
+  max_contact?: string;
+  access_token?: string;
 }
 
 export interface MasterWaitlistItem {
   id: number;
   lesson_id: number;
+  family_id?: number;
   child_id: number;
+  child_age?: number;
   status: string;
   created_at: string;
   child_name: string;
   parent_name: string;
   phone: string;
+  email?: string;
+  max_contact?: string;
+  access_token?: string;
 }
 
 export interface MasterLesson extends PublicLesson {
@@ -198,6 +209,8 @@ export interface MasterFamily {
   id: number;
   parent_name: string;
   phone: string;
+  email?: string;
+  max_contact?: string;
   access_token: string;
   money_balance: number;
   created_at: string;

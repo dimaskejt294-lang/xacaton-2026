@@ -306,7 +306,8 @@ masterRouter.get('/dashboard', (_req, res, next) => {
     const allBookings = db
       .prepare(
         `SELECT b.id, b.lesson_id, b.child_id, b.status, b.is_charged, b.charge_amount, b.is_makeup, b.updated_at,
-                c.name AS child_name, c.age AS child_age, f.id AS family_id, f.parent_name, f.phone
+                c.name AS child_name, c.age AS child_age, f.id AS family_id, f.parent_name, f.phone,
+                f.email, f.max_contact, f.access_token
          FROM bookings b
          JOIN children c ON c.id = b.child_id
          JOIN families f ON f.id = c.family_id
@@ -326,6 +327,9 @@ masterRouter.get('/dashboard', (_req, res, next) => {
       family_id: number;
       parent_name: string;
       phone: string;
+      email: string;
+      max_contact: string;
+      access_token: string;
     }>;
 
     const allLogs = db
@@ -344,7 +348,8 @@ masterRouter.get('/dashboard', (_req, res, next) => {
     const allWaitlist = db
       .prepare(
         `SELECT w.id, w.lesson_id, w.child_id, w.status, w.created_at,
-                c.name AS child_name, f.parent_name, f.phone
+                c.name AS child_name, c.age AS child_age, f.id AS family_id,
+                f.parent_name, f.phone, f.email, f.max_contact, f.access_token
          FROM waitlist w
          JOIN children c ON c.id = w.child_id
          JOIN families f ON f.id = c.family_id
@@ -354,20 +359,29 @@ masterRouter.get('/dashboard', (_req, res, next) => {
       .all() as Array<{
       id: number;
       lesson_id: number;
+      family_id: number;
       child_id: number;
+      child_age: number;
       status: string;
       created_at: string;
       child_name: string;
       parent_name: string;
       phone: string;
+      email: string;
+      max_contact: string;
+      access_token: string;
     }>;
 
     const families = db
-      .prepare('SELECT id, parent_name, phone, access_token, money_balance, created_at FROM families ORDER BY id ASC')
+      .prepare(
+        'SELECT id, parent_name, phone, email, max_contact, access_token, money_balance, created_at FROM families ORDER BY id ASC'
+      )
       .all() as Array<{
       id: number;
       parent_name: string;
       phone: string;
+      email: string;
+      max_contact: string;
       access_token: string;
       money_balance: number;
       created_at: string;
@@ -658,7 +672,7 @@ masterRouter.post('/bookings', (req, res, next) => {
     const lessonId = parsePositiveIntId(req.body?.lesson_id, 'Укажите корректное занятие');
     const childId = parsePositiveIntId(req.body?.child_id, 'Укажите корректного ребёнка');
     const isMakeup = Boolean(req.body?.is_makeup);
-    const result = createBooking({ lessonId, childId, isMakeup });
+    const result = createBooking({ lessonId, childId, isMakeup, allowOverCapacity: true });
     res.status(201).json({ ok: true, booking_id: result.bookingId });
   } catch (err) {
     next(err);
@@ -695,7 +709,11 @@ masterRouter.post('/waitlist/:waitlistId/convert', (req, res, next) => {
       throw new HttpError(404, 'Запись в листе ожидания не найдена');
     }
 
-    const result = createBooking({ lessonId: row.lesson_id, childId: row.child_id });
+    const result = createBooking({
+      lessonId: row.lesson_id,
+      childId: row.child_id,
+      allowOverCapacity: true,
+    });
     res.json({ ok: true, booking_id: result.bookingId });
   } catch (err) {
     next(err);
@@ -706,15 +724,17 @@ masterRouter.post('/families', (req, res, next) => {
   try {
     const parentName = sanitizePlainText(req.body?.parent_name, 120);
     const phone = sanitizePlainText(req.body?.phone, 30);
+    const email = sanitizePlainText(req.body?.email, 120);
+    const maxContact = sanitizePlainText(req.body?.max_contact, 120);
     const childName = sanitizePlainText(req.body?.child_name, 80);
     const childAge = Number(req.body?.child_age ?? 8);
     const childNotes = sanitizePlainText(req.body?.child_notes, 300) || null;
 
     if (!parentName || phone.length < 5 || !childName) {
-      throw new HttpError(400, 'Укажите ФИО родителя, корректный телефон и имя ребёнка');
+      throw new HttpError(400, 'Укажите ФИО родителя, корректный телефон и имя ученика');
     }
-    if (!Number.isInteger(childAge) || childAge < 3 || childAge > 18) {
-      throw new HttpError(400, 'Возраст ребёнка должен быть от 3 до 18 лет');
+    if (!Number.isInteger(childAge) || childAge < 3 || childAge > 99) {
+      throw new HttpError(400, 'Возраст ученика должен быть от 3 до 99 лет');
     }
 
     const created = runInTransaction((db) => {
@@ -722,9 +742,9 @@ masterRouter.post('/families', (req, res, next) => {
       const nowIso = new Date().toISOString();
       const famRes = db
         .prepare(
-          'INSERT INTO families (parent_name, phone, access_token, money_balance, created_at) VALUES (?, ?, ?, 0, ?)'
+          'INSERT INTO families (parent_name, phone, email, max_contact, access_token, money_balance, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)'
         )
-        .run(parentName, phone, token, nowIso);
+        .run(parentName, phone, email, maxContact, token, nowIso);
       const familyId = Number(famRes.lastInsertRowid);
 
       db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
@@ -750,6 +770,46 @@ masterRouter.post('/families', (req, res, next) => {
   }
 });
 
+masterRouter.put('/families/:familyId/profile', (req, res, next) => {
+  try {
+    const familyId = parsePositiveIntId(req.params.familyId, 'Некорректный ID семьи');
+    const parentName = sanitizePlainText(req.body?.parent_name, 120);
+    const phone = sanitizePlainText(req.body?.phone, 30);
+    const email = sanitizePlainText(req.body?.email, 120);
+    const maxContact = sanitizePlainText(req.body?.max_contact, 120);
+    const childId = req.body?.child_id ? Number(req.body.child_id) : null;
+    const childName = sanitizePlainText(req.body?.child_name, 80);
+    const childAge = req.body?.child_age !== undefined ? Number(req.body.child_age) : null;
+
+    if (!parentName || phone.length < 3) {
+      throw new HttpError(400, 'Укажите ФИО и телефон');
+    }
+
+    const db = getDb();
+    const fam = db.prepare('SELECT id FROM families WHERE id = ?').get(familyId);
+    if (!fam) {
+      throw new HttpError(404, 'Семья не найдена');
+    }
+
+    db.prepare(
+      'UPDATE families SET parent_name = ?, phone = ?, email = ?, max_contact = ? WHERE id = ?'
+    ).run(parentName, phone, email, maxContact, familyId);
+
+    if (childId && childName && childAge !== null && Number.isInteger(childAge) && childAge >= 3 && childAge <= 99) {
+      db.prepare('UPDATE children SET name = ?, age = ? WHERE id = ? AND family_id = ?').run(
+        childName,
+        childAge,
+        childId,
+        familyId
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 masterRouter.post('/families/:familyId/children', (req, res, next) => {
   try {
     const familyId = parsePositiveIntId(req.params.familyId, 'Некорректный ID семьи');
@@ -758,10 +818,10 @@ masterRouter.post('/families/:familyId/children', (req, res, next) => {
     const notes = sanitizePlainText(req.body?.notes, 300) || null;
 
     if (!name) {
-      throw new HttpError(400, 'Укажите имя ребёнка');
+      throw new HttpError(400, 'Укажите имя ученика');
     }
-    if (!Number.isInteger(age) || age < 3 || age > 18) {
-      throw new HttpError(400, 'Возраст должен быть от 3 до 18 лет');
+    if (!Number.isInteger(age) || age < 3 || age > 99) {
+      throw new HttpError(400, 'Возраст должен быть от 3 до 99 лет');
     }
 
     const db = getDb();
@@ -1167,7 +1227,8 @@ masterRouter.put('/password', (req, res, next) => {
 masterRouter.post('/import-csv', (req, res, next) => {
   try {
     const csvText = String(req.body?.csv_text ?? '');
-    const result = importClientsFromCsv(csvText);
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : undefined;
+    const result = importClientsFromCsv(csvText, rows);
     res.json({ ok: true, ...result });
   } catch (err) {
     next(err);

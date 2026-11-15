@@ -111,6 +111,8 @@ export interface FamilyRow {
   id: number;
   parent_name: string;
   phone: string;
+  email: string;
+  max_contact: string;
   access_token: string;
   money_balance: number;
   created_at: string;
@@ -124,7 +126,7 @@ export function resolveFamilyByToken(token: string): FamilyRow {
 
   const db = getDb();
   const row = db
-    .prepare('SELECT id, parent_name, phone, access_token, money_balance, created_at FROM families WHERE access_token = ?')
+    .prepare('SELECT id, parent_name, phone, email, max_contact, access_token, money_balance, created_at FROM families WHERE access_token = ?')
     .get(token) as FamilyRow | undefined;
 
   if (!row) {

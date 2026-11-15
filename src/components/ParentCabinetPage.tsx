@@ -104,6 +104,17 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
   const [pushPermission, setPushPermission] = useState<NotificationPermission>('default');
   const [pushBusy, setPushBusy] = useState(false);
 
+  // Student profile editor state
+  const [showProfileEditor, setShowProfileEditor] = useState(false);
+  const [profileFullName, setProfileFullName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
+  const [profileMax, setProfileMax] = useState('');
+  const [profileAge, setProfileAge] = useState(10);
+  const [profilePersonalDataConsent, setProfilePersonalDataConsent] = useState(true);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [copiedMyLink, setCopiedMyLink] = useState(false);
+
   const allConsentsChecked = acceptedOffer && acceptedPersonalData && acceptedPrivacy;
 
   useEffect(() => {
@@ -139,6 +150,23 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       const json = (await res.json()) as ParentDashboardData;
       setData(json);
       onTokenValid(token);
+      const firstChild = json.children[0];
+      setProfileFullName(firstChild?.name || json.family.parent_name || '');
+      setProfilePhone(json.family.phone === 'Не указан' ? '' : json.family.phone || '');
+      setProfileEmail(json.family.email || '');
+      setProfileMax(json.family.max_contact || '');
+      setProfileAge(firstChild?.age ?? 10);
+      if (
+        json.family.parent_name === 'Новый ученик' ||
+        json.family.phone === 'Не указан' ||
+        !json.family.email ||
+        !json.family.max_contact
+      ) {
+        setShowProfileEditor(true);
+        setProfilePersonalDataConsent(false);
+      } else {
+        setProfilePersonalDataConsent(true);
+      }
       setSelectedChildId((prev) => {
         if (prev !== 'all' && json.children.some((c) => c.id === prev)) {
           return prev;
@@ -588,6 +616,61 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
     }
   };
 
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBanner(null);
+    if (!profilePersonalDataConsent) {
+      setBanner({
+        type: 'error',
+        text: 'Для сохранения анкеты необходимо дать согласие на обработку персональных данных',
+      });
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      const res = await fetch(`/api/lk/${encodeURIComponent(token)}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: profileFullName.trim(),
+          child_name: profileFullName.trim(),
+          phone: profilePhone.trim(),
+          email: profileEmail.trim(),
+          max_contact: profileMax.trim(),
+          age: Number(profileAge) || 10,
+          child_id: activeChild?.id ?? data?.children[0]?.id,
+        }),
+      });
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setBanner({ type: 'error', text: body.error || 'Не удалось сохранить анкету ученика' });
+        return;
+      }
+      setBanner({
+        type: 'success',
+        text: 'Анкета ученика (ФИО, телефон, почта, MAX и возраст) успешно сохранена!',
+      });
+      setShowProfileEditor(false);
+      await loadCabinet();
+    } catch (err) {
+      console.warn('[ParentCabinetPage] Ошибка сохранения профиля:', err);
+      setBanner({ type: 'error', text: 'Ошибка сети при сохранении анкеты ученика' });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleCopyPersonalLink = async () => {
+    const fullUrl = `${window.location.origin}/lk/${encodeURIComponent(token)}`;
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedMyLink(true);
+      setTimeout(() => setCopiedMyLink(false), 2500);
+    } catch (err) {
+      console.warn('[ParentCabinetPage] Не удалось скопировать ссылку:', err);
+    }
+  };
+
   if (loading && !data) {
     return (
       <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -625,14 +708,29 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
 
   const balanceNegative = data.family.money_balance < 0;
   const balancePositive = data.family.money_balance > 0;
+  const personalUrl = `${window.location.origin}/lk/${token}`;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Header row */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <div className="text-xs font-medium text-[#6B7280]">
-            Личный кабинет семьи · {data.family.phone}
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#6B7280]">
+            <span>Личный кабинет ученика</span>
+            <span aria-hidden="true">·</span>
+            <span>{data.family.phone}</span>
+            {data.family.email && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{data.family.email}</span>
+              </>
+            )}
+            {data.family.max_contact && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-semibold text-[#C86D2D]">MAX: {data.family.max_contact}</span>
+              </>
+            )}
           </div>
           <h1 className="mt-0.5 font-display text-2xl font-bold tracking-tight text-[#111827]">
             {data.family.parent_name}
@@ -640,6 +738,15 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowProfileEditor((prev) => !prev)}
+            className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-[#C86D2D] bg-[#FDF4ED] px-4 py-2 text-sm font-semibold text-[#C86D2D] transition-colors hover:bg-[#FCE8D8]"
+          >
+            <User className="h-4 w-4" strokeWidth={1.75} />
+            <span>{showProfileEditor ? 'Скрыть анкету' : 'Анкета ученика'}</span>
+          </button>
+
           <PWAInstallButton
             variant="cabinet"
             familyToken={token}
@@ -677,6 +784,198 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Personal login link bar */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#E5E7EB] bg-white px-4 py-3 text-xs shadow-2xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-[#111827]">Ваша ссылка для входа в ЛК:</span>
+          <code className="rounded-lg bg-[#F9FAFB] px-2.5 py-1 font-mono text-[#374151]">
+            {personalUrl}
+          </code>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleCopyPersonalLink()}
+          className="min-h-[34px] cursor-pointer rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-3 font-semibold text-[#111827] hover:bg-[#F3F4F6]"
+        >
+          {copiedMyLink ? 'Ссылка скопирована!' : 'Скопировать ссылку'}
+        </button>
+      </div>
+
+      {/* Student Profile Form (ФИО, номер телефона, почта, MAX, возраст) */}
+      {showProfileEditor && (
+        <form
+          onSubmit={handleSaveProfile}
+          className="mt-4 rounded-2xl border border-[#C86D2D]/30 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-base font-bold text-[#111827]">
+                Анкета ученика (личные данные для мастера)
+              </h2>
+              <p className="mt-0.5 text-xs text-[#6B7280]">
+                Заполните ФИО, номер телефона, электронную почту, контакт в мессенджере MAX и возраст ученика.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="lg:col-span-2">
+              <label className="block text-xs font-medium text-[#6B7280]">
+                ФИО ученика (или родителя) *
+              </label>
+              <input
+                type="text"
+                required
+                value={profileFullName}
+                onChange={(e) => setProfileFullName(e.target.value)}
+                placeholder="Иванов Иван Иванович"
+                className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#6B7280]">
+                Номер телефона *
+              </label>
+              <input
+                type="tel"
+                required
+                value={profilePhone}
+                onChange={(e) => setProfilePhone(e.target.value)}
+                placeholder="+7 (922) 000-00-00"
+                className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#6B7280]">
+                Почта (Email)
+              </label>
+              <input
+                type="email"
+                value={profileEmail}
+                onChange={(e) => setProfileEmail(e.target.value)}
+                placeholder="student@mail.ru"
+                className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#6B7280]">
+                Мессенджер MAX
+              </label>
+              <input
+                type="text"
+                value={profileMax}
+                onChange={(e) => setProfileMax(e.target.value)}
+                placeholder="@ник или номер в MAX"
+                className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="mt-3.5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <div className="flex flex-wrap items-end gap-3.5">
+              <div className="w-36">
+                <label className="block text-xs font-medium text-[#6B7280]">
+                  Возраст (лет) *
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={3}
+                  max={99}
+                  value={profileAge}
+                  onChange={(e) => setProfileAge(Number(e.target.value))}
+                  className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] tabular-nums focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                />
+              </div>
+
+              {(() => {
+                const pdDoc = data.legal_documents?.find((d) => d.doc_key === 'personal_data');
+                const privDoc = data.legal_documents?.find((d) => d.doc_key === 'privacy');
+                return (
+                  <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-2.5 text-xs text-[#374151] transition-colors hover:border-[#C86D2D]/50">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={profilePersonalDataConsent}
+                      onChange={(e) => setProfilePersonalDataConsent(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#D1D5DB] text-[#C86D2D] focus:ring-[#C86D2D]"
+                    />
+                    <span className="leading-relaxed">
+                      Даю согласие с документом{' '}
+                      {pdDoc ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setPreviewLegalDoc(pdDoc);
+                          }}
+                          className="cursor-pointer font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
+                        >
+                          «{pdDoc.title}»
+                        </button>
+                      ) : (
+                        <a
+                          href="/api/public/legal/personal_data/file?inline=1"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
+                        >
+                          «Согласие на обработку персональных данных»
+                        </a>
+                      )}{' '}
+                      и{' '}
+                      {privDoc ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setPreviewLegalDoc(privDoc);
+                          }}
+                          className="cursor-pointer font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
+                        >
+                          «{privDoc.title}»
+                        </button>
+                      ) : (
+                        <a
+                          href="/api/public/legal/privacy/file?inline=1"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
+                        >
+                          «Политика конфиденциальности»
+                        </a>
+                      )}
+                    </span>
+                  </label>
+                );
+              })()}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowProfileEditor(false)}
+                className="min-h-[42px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-4 text-xs font-medium text-[#6B7280] hover:bg-[#F9FAFB]"
+              >
+                Свернуть
+              </button>
+              <button
+                type="submit"
+                disabled={savingProfile || !profilePersonalDataConsent}
+                className="min-h-[42px] cursor-pointer rounded-xl bg-[#C86D2D] px-5 text-sm font-medium text-white shadow-sm hover:bg-[#B05B20] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingProfile ? 'Сохранение...' : 'Сохранить анкету'}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
 
       {/* Feedback Banner */}
       <AnimatePresence>

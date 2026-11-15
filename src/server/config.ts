@@ -16,10 +16,27 @@ export interface AppConfig {
   isProduction: boolean;
 }
 
-const rawPort = Number(process.env.PORT ?? '3000');
+function resolvePort(): number {
+  const args = process.argv;
+  const portFlagIdx = args.indexOf('--port');
+  if (portFlagIdx !== -1 && args[portFlagIdx + 1]) {
+    const cliPort = Number(args[portFlagIdx + 1]);
+    if (Number.isFinite(cliPort) && cliPort > 0) {
+      return cliPort;
+    }
+  }
+  const envPort = Number(process.env.PORT ?? '3000');
+  if (process.env.NODE_ENV === 'production' && Number.isFinite(envPort) && envPort > 0) {
+    return envPort;
+  }
+  if (Number.isFinite(envPort) && envPort > 0 && envPort !== 8080) {
+    return envPort;
+  }
+  return 3000;
+}
 
 export const config: AppConfig = {
-  port: Number.isFinite(rawPort) && rawPort > 0 ? rawPort : 3000,
+  port: resolvePort(),
   appUrl: (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, ''),
   masterPassword: (process.env.MASTER_PASSWORD ?? '').trim(),
   sessionSecret:

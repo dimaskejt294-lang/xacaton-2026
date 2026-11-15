@@ -106,8 +106,24 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [showNewFamily, setShowNewFamily] = useState(false);
   const [newParentName, setNewParentName] = useState('');
   const [newParentPhone, setNewParentPhone] = useState('');
+  const [newParentEmail, setNewParentEmail] = useState('');
+  const [newParentMax, setNewParentMax] = useState('');
   const [newChildName, setNewChildName] = useState('');
   const [newChildAge, setNewChildAge] = useState(8);
+
+  // Student Card Modal state
+  const [selectedStudentCard, setSelectedStudentCard] = useState<{
+    familyId: number;
+    childId?: number;
+  } | null>(null);
+  const [cardParentName, setCardParentName] = useState('');
+  const [cardPhone, setCardPhone] = useState('');
+  const [cardEmail, setCardEmail] = useState('');
+  const [cardMax, setCardMax] = useState('');
+  const [cardChildId, setCardChildId] = useState<number | null>(null);
+  const [cardChildName, setCardChildName] = useState('');
+  const [cardChildAge, setCardChildAge] = useState(10);
+  const [savingStudentCard, setSavingStudentCard] = useState(false);
 
   const [addChildFamilyId, setAddChildFamilyId] = useState<number | null>(null);
   const [extraChildName, setExtraChildName] = useState('');
@@ -155,6 +171,27 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [heroGroupsText, setHeroGroupsText] = useState('2–4 места');
   const [showHeroFreeCancel, setShowHeroFreeCancel] = useState(true);
   const [csvImportText, setCsvImportText] = useState('');
+  const [moyKlassRows, setMoyKlassRows] = useState<
+    Array<{
+      child_name: string;
+      phone: string;
+      email: string;
+      max_contact: string;
+      age: string;
+      parent_name: string;
+      remaining_lessons: string;
+    }>
+  >([
+    {
+      child_name: '',
+      phone: '',
+      email: '',
+      max_contact: '',
+      age: '10',
+      parent_name: '',
+      remaining_lessons: '0',
+    },
+  ]);
   const [editingLegalKey, setEditingLegalKey] = useState<LegalDocKey | null>(null);
   const [legalTitleInput, setLegalTitleInput] = useState('');
   const [legalTextInput, setLegalTextInput] = useState('');
@@ -443,6 +480,61 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     await loadDashboard();
   };
 
+  const openStudentCard = useCallback(
+    (familyId: number, childId?: number) => {
+      const fam = data?.families.find((f) => f.id === familyId);
+      if (!fam) return;
+      const chosenChild =
+        (childId ? fam.children.find((c) => c.id === childId) : undefined) ?? fam.children[0];
+      setSelectedStudentCard({ familyId: fam.id, childId: chosenChild?.id });
+      setCardParentName(fam.parent_name);
+      setCardPhone(fam.phone);
+      setCardEmail(fam.email ?? '');
+      setCardMax(fam.max_contact ?? '');
+      setCardChildId(chosenChild?.id ?? null);
+      setCardChildName(chosenChild?.name ?? fam.parent_name);
+      setCardChildAge(chosenChild?.age ?? 10);
+    },
+    [data]
+  );
+
+  const handleSaveStudentCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedStudentCard) return;
+    setBanner(null);
+    setSavingStudentCard(true);
+    try {
+      const res = await masterFetch(
+        `/api/master/families/${selectedStudentCard.familyId}/profile`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            parent_name: cardParentName,
+            phone: cardPhone,
+            email: cardEmail,
+            max_contact: cardMax,
+            child_id: cardChildId,
+            child_name: cardChildName,
+            child_age: cardChildAge,
+          }),
+        }
+      );
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setBanner({ type: 'error', text: body.error || 'Не удалось обновить карточку ученика' });
+        return;
+      }
+      setBanner({ type: 'success', text: 'Данные карточки ученика сохранены.' });
+      await loadDashboard();
+    } catch (err) {
+      console.error('[MasterPanel] Ошибка сохранения карточки ученика:', err);
+      setBanner({ type: 'error', text: 'Ошибка сети при сохранении карточки ученика' });
+    } finally {
+      setSavingStudentCard(false);
+    }
+  };
+
   const handleCreateFamily = async (e: React.FormEvent) => {
     e.preventDefault();
     setBanner(null);
@@ -452,7 +544,9 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       body: JSON.stringify({
         parent_name: newParentName,
         phone: newParentPhone,
-        child_name: newChildName,
+        email: newParentEmail,
+        max_contact: newParentMax,
+        child_name: newChildName || newParentName,
         child_age: newChildAge,
       }),
     });
@@ -463,9 +557,11 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     }
     setNewParentName('');
     setNewParentPhone('');
+    setNewParentEmail('');
+    setNewParentMax('');
     setNewChildName('');
     setShowNewFamily(false);
-    setBanner({ type: 'success', text: 'Семья добавлена, персональная ссылка сгенерирована.' });
+    setBanner({ type: 'success', text: 'Ученик / семья добавлены, персональная ссылка сгенерирована.' });
     await loadDashboard();
   };
 
@@ -767,13 +863,117 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     await loadDashboard();
   };
 
+  const parseTableTextIntoRows = (rawText: string) => {
+    const lines = rawText
+      .replace(/^\uFEFF/, '')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length === 0) return;
+
+    const splitLine = (line: string) => {
+      const delim = line.includes('\t') ? '\t' : line.includes(';') ? ';' : ',';
+      return line.split(delim).map((c) => c.trim().replace(/^"|"$/g, ''));
+    };
+
+    const firstCols = splitLine(lines[0]);
+    const hasHeader = firstCols.some((c) =>
+      /фио|имя|ученик|клиент|родител|заказчик|телефон|phone|email|почта|возраст|рожд|остаток|абонем|баланс/i.test(
+        c
+      )
+    );
+
+    let idxChild = -1;
+    let idxParent = -1;
+    let idxPhone = -1;
+    let idxEmail = -1;
+    let idxMax = -1;
+    let idxAge = -1;
+    let idxLessons = -1;
+
+    if (hasHeader) {
+      firstCols.forEach((col, idx) => {
+        const h = col.toLowerCase();
+        if (idxChild === -1 && /ученик|реб[её]нок|клиент|фио|имя/.test(h) && !/родител|заказчик|ответствен/.test(h)) {
+          idxChild = idx;
+        } else if (idxParent === -1 && /родител|заказчик|ответствен|контакт/.test(h)) {
+          idxParent = idx;
+        } else if (idxPhone === -1 && /телефон|phone|моб|номер/.test(h) && !/max|макс/.test(h)) {
+          idxPhone = idx;
+        } else if (idxEmail === -1 && /email|e-mail|почт|mail/.test(h)) {
+          idxEmail = idx;
+        } else if (idxMax === -1 && /max|макс|мессендж|коммент|примеч/.test(h)) {
+          idxMax = idx;
+        } else if (idxAge === -1 && /возраст|рожд|age|лет/.test(h)) {
+          idxAge = idx;
+        } else if (idxLessons === -1 && /остаток|занят|абонем|уроков/.test(h)) {
+          idxLessons = idx;
+        }
+      });
+    }
+
+    const nextRows: typeof moyKlassRows = [];
+    const startIdx = hasHeader ? 1 : 0;
+    for (let i = startIdx; i < lines.length; i += 1) {
+      const cols = splitLine(lines[i]);
+      if (cols.every((c) => !c)) continue;
+
+      if (hasHeader && (idxChild !== -1 || idxParent !== -1 || idxPhone !== -1)) {
+        const childName = idxChild !== -1 ? (cols[idxChild] ?? '') : (cols[idxParent] ?? '');
+        const parentName = idxParent !== -1 ? (cols[idxParent] ?? '') : childName;
+        nextRows.push({
+          child_name: childName,
+          phone: idxPhone !== -1 ? (cols[idxPhone] ?? '') : '',
+          email: idxEmail !== -1 ? (cols[idxEmail] ?? '') : '',
+          max_contact: idxMax !== -1 ? (cols[idxMax] ?? '') : '',
+          age: idxAge !== -1 ? (cols[idxAge] || '10') : '10',
+          parent_name: parentName,
+          remaining_lessons: idxLessons !== -1 ? (cols[idxLessons] || '0') : '0',
+        });
+      } else if ((cols[2] ?? '').includes('@') || cols.length >= 6) {
+        nextRows.push({
+          child_name: cols[0] ?? '',
+          phone: cols[1] ?? '',
+          email: cols[2] ?? '',
+          max_contact: cols[3] ?? '',
+          age: cols[4] || '10',
+          parent_name: cols[5] && isNaN(Number(cols[5])) ? cols[5] : (cols[0] ?? ''),
+          remaining_lessons:
+            cols[5] && !isNaN(Number(cols[5])) ? cols[5] : (cols[6] || '0'),
+        });
+      } else {
+        nextRows.push({
+          child_name: cols[2] || cols[0] || '',
+          phone: cols[1] ?? '',
+          email: '',
+          max_contact: '',
+          age: cols[3] || '10',
+          parent_name: cols[0] ?? '',
+          remaining_lessons: cols[4] || '0',
+        });
+      }
+    }
+
+    if (nextRows.length > 0) {
+      setMoyKlassRows(nextRows);
+    }
+  };
+
   const handleImportCsv = async (e: React.FormEvent) => {
     e.preventDefault();
     setBanner(null);
+    const nonEmptyRows = moyKlassRows.filter(
+      (r) => r.child_name.trim() !== '' || r.parent_name.trim() !== ''
+    );
+    const payload =
+      nonEmptyRows.length > 0
+        ? { rows: nonEmptyRows, csv_text: csvImportText }
+        : { csv_text: csvImportText };
+
     const res = await masterFetch('/api/master/import-csv', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ csv_text: csvImportText }),
+      body: JSON.stringify(payload),
     });
     const body = (await res.json()) as {
       importedFamilies?: number;
@@ -781,13 +981,24 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       error?: string;
     };
     if (!res.ok) {
-      setBanner({ type: 'error', text: body.error || 'Ошибка импорта CSV' });
+      setBanner({ type: 'error', text: body.error || 'Ошибка импорта таблицы «МойКласс»' });
       return;
     }
     setCsvImportText('');
+    setMoyKlassRows([
+      {
+        child_name: '',
+        phone: '',
+        email: '',
+        max_contact: '',
+        age: '10',
+        parent_name: '',
+        remaining_lessons: '0',
+      },
+    ]);
     setBanner({
       type: 'success',
-      text: `Импортировано семей: ${body.importedFamilies ?? 0}, детей: ${body.importedChildren ?? 0}.`,
+      text: `Импортировано из таблицы «МойКласс» — семей: ${body.importedFamilies ?? 0}, учеников: ${body.importedChildren ?? 0}.`,
     });
     await loadDashboard();
   };
@@ -1126,7 +1337,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
             { id: 'grid', label: 'Журнал (клеточки)', icon: Grid3x3 },
             { id: 'families', label: 'Семьи и абонементы', icon: Users },
             { id: 'payments', label: 'Оплаты и чеки', icon: FileText },
-            { id: 'settings', label: 'Правила и выгрузка', icon: Settings },
+            { id: 'settings', label: 'Документы согласий и правила', icon: Settings },
           ] as const
         ).map((tab) => {
           const Icon = tab.icon;
@@ -1370,6 +1581,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       onEditLesson={startEditLesson}
                       onCancelLesson={handleCancelLesson}
                       onCreateLessonOnDate={startCreateLessonOnDate}
+                      onSelectStudent={openStudentCard}
                     />
                   ) : (
                     <div className="space-y-4">
@@ -1463,9 +1675,13 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                 >
                                   <div>
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <span className="font-semibold text-[#111827]">
+                                      <button
+                                        type="button"
+                                        onClick={() => openStudentCard(b.family_id, b.child_id)}
+                                        className="cursor-pointer font-semibold text-[#111827] underline decoration-[#C86D2D]/50 underline-offset-2 hover:text-[#C86D2D]"
+                                      >
                                         {b.child_name} ({pluralizeYears(b.child_age)})
-                                      </span>
+                                      </button>
                                       <span
                                         className={`rounded-lg px-2 py-0.5 text-xs font-semibold ${bookingStatusClasses(
                                           b.status
@@ -1480,7 +1696,9 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                       )}
                                     </div>
                                     <div className="mt-0.5 text-xs text-[#6B7280] tabular-nums">
-                                      {b.parent_name} · {b.phone} ·{' '}
+                                      {b.parent_name} · {b.phone}
+                                      {b.email ? ` · ${b.email}` : ''}
+                                      {b.max_contact ? ` · MAX: ${b.max_contact}` : ''} ·{' '}
                                       {b.is_charged ? 'Списано' : 'Не списано'}
                                     </div>
                                   </div>
@@ -1550,10 +1768,18 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                     key={w.id}
                                     className="flex flex-wrap items-center justify-between gap-2 text-xs"
                                   >
-                                    <span className="font-medium text-[#111827]">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (w.family_id) {
+                                          openStudentCard(w.family_id, w.child_id);
+                                        }
+                                      }}
+                                      className="cursor-pointer font-medium text-[#111827] underline decoration-[#C86D2D]/50 underline-offset-2 hover:text-[#C86D2D]"
+                                    >
                                       {w.child_name} ({w.parent_name}, {w.phone})
-                                    </span>
-                                    {!isFull && (
+                                    </button>
+                                    {lesson.is_canceled === 0 && (
                                       <button
                                         type="button"
                                         onClick={() => void handleConvertWaitlist(w.id)}
@@ -1568,8 +1794,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                             </div>
                           )}
 
-                          {/* Quick Manual Enroll */}
-                          {lesson.is_canceled === 0 && !isFull && (
+                          {/* Quick Manual Enroll (allowed even when group is full) */}
+                          {lesson.is_canceled === 0 && (
                             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#F3F4F6] pt-3">
                               <select
                                 value={enrollChildMap[lesson.id] ?? ''}
@@ -1581,7 +1807,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                 }
                                 className="min-h-[44px] flex-1 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:outline-none sm:max-w-xs"
                               >
-                                <option value="">Записать ребёнка...</option>
+                                <option value="">Записать ученика...</option>
                                 {allChildrenFlat.map((c) => (
                                   <option key={c.id} value={c.id}>
                                     {c.name} ({c.parent_name})
@@ -1593,7 +1819,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                 onClick={() => void handleMasterEnroll(lesson.id)}
                                 className="min-h-[44px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-4 text-sm font-medium text-[#111827] hover:bg-[#F9FAFB]"
                               >
-                                Записать
+                                {isFull ? 'Записать сверх лимита' : 'Записать'}
                               </button>
                             </div>
                           )}
@@ -1658,6 +1884,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                     families={data.families}
                     onMarkStatus={handleMarkStatus}
                     onEnrollChild={handleEnrollChildByIds}
+                    onSelectStudent={openStudentCard}
                   />
                 </motion.div>
               )}
@@ -1838,15 +2065,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
                     >
                       <h3 className="font-display text-base font-semibold text-[#111827]">
-                        Регистрация новой семьи
+                        Регистрация нового ученика / семьи
                       </h3>
-                      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <input
                           type="text"
                           required
                           value={newParentName}
                           onChange={(e) => setNewParentName(e.target.value)}
-                          placeholder="ФИО родителя"
+                          placeholder="ФИО ученика или родителя"
                           className="min-h-[44px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
                         />
                         <input
@@ -1858,17 +2085,30 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           className="min-h-[44px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
                         />
                         <input
+                          type="email"
+                          value={newParentEmail}
+                          onChange={(e) => setNewParentEmail(e.target.value)}
+                          placeholder="Почта (Email)"
+                          className="min-h-[44px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                        <input
                           type="text"
-                          required
+                          value={newParentMax}
+                          onChange={(e) => setNewParentMax(e.target.value)}
+                          placeholder="Мессенджер MAX (ник или номер)"
+                          className="min-h-[44px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                        <input
+                          type="text"
                           value={newChildName}
                           onChange={(e) => setNewChildName(e.target.value)}
-                          placeholder="Имя ребёнка"
+                          placeholder="Имя ученика (если отличается)"
                           className="min-h-[44px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
                         />
                         <input
                           type="number"
                           min={3}
-                          max={18}
+                          max={99}
                           required
                           value={newChildAge}
                           onChange={(e) => setNewChildAge(Number(e.target.value))}
@@ -1881,7 +2121,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           type="submit"
                           className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-5 text-sm font-medium text-white hover:bg-[#B05B20]"
                         >
-                          Сохранить семью
+                          Сохранить ученика
                         </button>
                       </div>
                     </form>
@@ -1896,28 +2136,36 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
                           <div>
                             <div className="flex flex-wrap items-center gap-2.5">
-                              <h3 className="font-display text-lg font-semibold text-[#111827]">
+                              <button
+                                type="button"
+                                onClick={() => openStudentCard(family.id, family.children[0]?.id)}
+                                className="cursor-pointer text-left font-display text-lg font-semibold text-[#111827] underline decoration-[#C86D2D]/40 underline-offset-2 hover:text-[#C86D2D]"
+                              >
                                 {family.parent_name}
-                              </h3>
+                              </button>
                               {family.needs_renewal && (
                                 <span className="rounded-lg bg-[#FFFBEB] px-2.5 py-0.5 text-xs font-semibold text-[#92400E]">
                                   Напомнить о продлении
                                 </span>
                               )}
                             </div>
-                            <div className="mt-0.5 text-xs text-[#6B7280] tabular-nums">
-                              {family.phone}
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#6B7280] tabular-nums">
+                              <span>{family.phone}</span>
+                              {family.email && <span>· Почта: {family.email}</span>}
+                              {family.max_contact && <span>· MAX: {family.max_contact}</span>}
                             </div>
 
                             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-[#111827]">
-                              <span className="text-xs font-medium text-[#6B7280]">Дети:</span>
+                              <span className="text-xs font-medium text-[#6B7280]">Ученики:</span>
                               {family.children.map((c) => (
-                                <span
+                                <button
                                   key={c.id}
-                                  className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 py-1 text-xs font-medium"
+                                  type="button"
+                                  onClick={() => openStudentCard(family.id, c.id)}
+                                  className="cursor-pointer rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 py-1 text-xs font-medium text-[#111827] hover:border-[#C86D2D] hover:bg-[#FDF4ED] hover:text-[#C86D2D]"
                                 >
                                   {c.name}, {pluralizeYears(c.age)}
-                                </span>
+                                </button>
                               ))}
                               <button
                                 type="button"
@@ -1928,7 +2176,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                 }
                                 className="cursor-pointer text-xs font-medium text-[#C86D2D] hover:underline"
                               >
-                                + Добавить ребёнка
+                                + Добавить ученика
                               </button>
                             </div>
 
@@ -1938,13 +2186,13 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                                   type="text"
                                   value={extraChildName}
                                   onChange={(e) => setExtraChildName(e.target.value)}
-                                  placeholder="Имя ребёнка"
+                                  placeholder="ФИО / Имя ученика"
                                   className="min-h-[40px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs"
                                 />
                                 <input
                                   type="number"
                                   min={3}
-                                  max={18}
+                                  max={99}
                                   value={extraChildAge}
                                   onChange={(e) => setExtraChildAge(Number(e.target.value))}
                                   className="min-h-[40px] w-20 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs tabular-nums"
@@ -2095,11 +2343,20 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#F3F4F6] pt-4">
                           <button
                             type="button"
-                            onClick={() => onNavigate(`/lk/${family.access_token}`)}
+                            onClick={() => openStudentCard(family.id, family.children[0]?.id)}
                             className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3.5 text-xs font-medium text-white hover:bg-[#B05B20]"
                           >
-                            <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-                            Открыть кабинет родителя
+                            <Users className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            Карточка ученика
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => onNavigate(`/lk/${family.access_token}`)}
+                            className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB]"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
+                            Открыть ЛК ученика
                           </button>
 
                           <button
@@ -2399,7 +2656,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                 </motion.div>
               )}
 
-              {/* TAB 4: SETTINGS, CSV EXPORTS & BACKUP */}
+              {/* TAB 4: SETTINGS, LEGAL CONSENT DOCUMENTS, CSV EXPORTS & BACKUP */}
               {activeTab === 'settings' && (
                 <motion.div
                   key="m-settings"
@@ -2409,6 +2666,159 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                   transition={{ duration: 0.16 }}
                   className="grid grid-cols-1 gap-6 lg:grid-cols-2"
                 >
+                  {/* Legal Documents Management (Personal Data Consent, Privacy Policy, Offer) */}
+                  <div className="rounded-2xl border border-[#C86D2D]/35 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] lg:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-5 w-5 text-[#C86D2D]" strokeWidth={1.75} />
+                        <h2 className="font-display text-base font-bold text-[#111827]">
+                          Документы согласий (при регистрации ученика, заполнении анкеты в ЛК и оплате)
+                        </h2>
+                      </div>
+                      <span className="rounded-lg bg-[#FDF4ED] px-2.5 py-1 text-xs font-semibold text-[#C86D2D]">
+                        Обновляются на сайте мгновенно
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-[#6B7280]">
+                      Здесь вы можете изменить название и полный текст каждого документа согласия или загрузить свой готовый файл (PDF, DOCX, изображение, TXT). Эти документы открываются у учеников и родителей при постановке галочки на главной странице (регистрация), в анкете ученика в ЛК и перед онлайн-оплатой.
+                    </p>
+
+                    <div className="mt-4 space-y-3">
+                      {data.legal_documents.map((doc) => {
+                        const isEditingThis = editingLegalKey === doc.doc_key;
+                        const usageLabel =
+                          doc.doc_key === 'personal_data'
+                            ? 'Галочка при регистрации + анкета в ЛК + оплата'
+                            : doc.doc_key === 'privacy'
+                            ? 'Галочка при регистрации + анкета в ЛК + оплата'
+                            : 'Галочка при регистрации + оплата абонемента в ЛК';
+                        return (
+                          <div
+                            key={doc.doc_key}
+                            className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
+                          >
+                            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-semibold text-[#111827]">
+                                    {doc.title}
+                                  </span>
+                                  <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-0.5 text-[11px] font-medium text-[#6B7280]">
+                                    {usageLabel}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-xs text-[#6B7280]">
+                                  {doc.has_file === 1 && doc.original_name
+                                    ? `Прикреплён ваш файл: ${doc.original_name}`
+                                    : 'Используется текстовая версия документа (можно отредактировать ниже или загрузить файл)'}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <a
+                                  href={`/api/public/legal/${doc.doc_key}/file?inline=1`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex min-h-[38px] items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
+                                  Открыть
+                                </a>
+
+                                <label className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-lg bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]">
+                                  <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  <span>Загрузить файл</span>
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp"
+                                    onChange={(e) => {
+                                      const selected = e.target.files?.[0];
+                                      e.target.value = '';
+                                      void handleUploadLegalFile(doc.doc_key, selected);
+                                    }}
+                                    className="hidden"
+                                  />
+                                </label>
+
+                                {doc.has_file === 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteLegalFile(doc.doc_key)}
+                                    className="inline-flex min-h-[38px] cursor-pointer items-center gap-1 rounded-lg border border-[#FECACA] bg-white px-3 text-xs font-medium text-[#991B1B] hover:bg-[#FEF2F2]"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                    Убрать файл
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (isEditingThis) {
+                                      setEditingLegalKey(null);
+                                    } else {
+                                      setEditingLegalKey(doc.doc_key);
+                                      setLegalTitleInput(doc.title);
+                                      setLegalTextInput(doc.content_text);
+                                    }
+                                  }}
+                                  className="inline-flex min-h-[38px] cursor-pointer items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                                >
+                                  <Pencil className="h-3.5 w-3.5 text-[#6B7280]" strokeWidth={1.5} />
+                                  {isEditingThis ? 'Свернуть редактор' : 'Изменить текст / название'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {isEditingThis && (
+                              <div className="mt-3 space-y-2.5 border-t border-[#E5E7EB] pt-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-[#6B7280]">
+                                    Название документа (отображается в ссылке рядом с галочкой)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={legalTitleInput}
+                                    onChange={(e) => setLegalTitleInput(e.target.value)}
+                                    placeholder="Заголовок документа"
+                                    className="mt-1 min-h-[40px] w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-[#6B7280]">
+                                    Полный текст документа согласия
+                                  </label>
+                                  <textarea
+                                    rows={8}
+                                    value={legalTextInput}
+                                    onChange={(e) => setLegalTextInput(e.target.value)}
+                                    className="mt-1 w-full rounded-xl border border-[#E5E7EB] bg-white p-3 text-xs leading-relaxed text-[#111827] focus:border-[#C86D2D] focus:outline-none"
+                                  />
+                                </div>
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingLegalKey(null)}
+                                    className="min-h-[38px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-medium text-[#6B7280]"
+                                  >
+                                    Отмена
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSaveLegalText(doc.doc_key)}
+                                    className="min-h-[38px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-xs font-semibold text-white hover:bg-[#B05B20]"
+                                  >
+                                    Сохранить документ
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Configurable Rules */}
                   <form
                     onSubmit={handleSaveSettings}
@@ -2771,30 +3181,253 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       </div>
                     </form>
 
-                    {/* MoyKlass CSV Import */}
+                    {/* MoyKlass Table Import */}
                     <form
                       onSubmit={handleImportCsv}
                       className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
                     >
-                      <h3 className="font-display text-base font-semibold text-[#111827]">
-                        Импорт семей из выгрузки «МойКласс» (CSV)
-                      </h3>
-                      <p className="mt-1 text-xs text-[#6B7280]">
-                        Формат строк: Родитель;Телефон;Имя ребёнка;Возраст;Остаток занятий
-                      </p>
-                      <textarea
-                        rows={4}
-                        value={csvImportText}
-                        onChange={(e) => setCsvImportText(e.target.value)}
-                        placeholder="Ольга Петрова;+7 (922) 400-77-88;Кирилл;9;4"
-                        className="mt-3 w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3 text-xs text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
-                      />
-                      <button
-                        type="submit"
-                        className="mt-3 min-h-[44px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-4 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB]"
-                      >
-                        Импортировать строки
-                      </button>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <FileSpreadsheet className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
+                            <h3 className="font-display text-base font-semibold text-[#111827]">
+                              Импорт учеников из «МойКласс» (формат таблицы)
+                            </h3>
+                          </div>
+                          <p className="mt-1 text-xs text-[#6B7280]">
+                            Заполните строки прямо в таблице, загрузите файл выгрузки CSV/TSV из
+                            «МойКласс» или вставьте скопированные ячейки из Excel / таблицы «МойКласс».
+                          </p>
+                        </div>
+
+                        <label className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]">
+                          <Upload className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.75} />
+                          <span>Загрузить файл таблицы (.csv / .tsv)</span>
+                          <input
+                            type="file"
+                            accept=".csv,.tsv,.txt"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                const text = String(reader.result ?? '');
+                                setCsvImportText(text);
+                                parseTableTextIntoRows(text);
+                              };
+                              reader.readAsText(file, 'utf-8');
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {/* Paste from Excel / MoyKlass helper */}
+                      <div className="mt-3">
+                        <textarea
+                          rows={2}
+                          value={csvImportText}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCsvImportText(val);
+                            if (val.includes('\t') || val.includes(';') || val.includes('\n')) {
+                              parseTableTextIntoRows(val);
+                            }
+                          }}
+                          placeholder="Вставьте сюда скопированные строки из таблицы «МойКласс» или Excel (ФИО, Телефон, Почта, MAX, Возраст / Дата рождения, Остаток) — они автоматически разложатся по колонкам ниже..."
+                          className="w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-2.5 text-xs text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Interactive Table */}
+                      <div className="mt-3 overflow-x-auto rounded-xl border border-[#E5E7EB]">
+                        <table className="w-full min-w-[680px] border-collapse text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-[#E5E7EB] bg-[#F9FAFB] text-[11px] font-semibold text-[#374151]">
+                              <th className="px-2.5 py-2">ФИО ученика *</th>
+                              <th className="px-2.5 py-2">Телефон</th>
+                              <th className="px-2.5 py-2">Почта (Email)</th>
+                              <th className="px-2.5 py-2">Мессенджер MAX</th>
+                              <th className="w-28 px-2.5 py-2">Возраст / ДР</th>
+                              <th className="px-2.5 py-2">Родитель (опц.)</th>
+                              <th className="w-20 px-2.5 py-2">Занятий</th>
+                              <th className="w-9 px-2 py-2 text-center" aria-label="Удалить" />
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#F3F4F6] bg-white">
+                            {moyKlassRows.map((row, idx) => (
+                              <tr key={idx}>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.child_name}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) =>
+                                          i === idx ? { ...r, child_name: val } : r
+                                        )
+                                      );
+                                    }}
+                                    placeholder="Иван Петров"
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 text-xs focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.phone}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) => (i === idx ? { ...r, phone: val } : r))
+                                      );
+                                    }}
+                                    placeholder="+7 (922) 000-00-00"
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 text-xs focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.email}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) => (i === idx ? { ...r, email: val } : r))
+                                      );
+                                    }}
+                                    placeholder="mail@example.ru"
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 text-xs focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.max_contact}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) =>
+                                          i === idx ? { ...r, max_contact: val } : r
+                                        )
+                                      );
+                                    }}
+                                    placeholder="@max_nick"
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 text-xs focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.age}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) => (i === idx ? { ...r, age: val } : r))
+                                      );
+                                    }}
+                                    placeholder="10 или 15.05.2016"
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2 text-xs tabular-nums focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.parent_name}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) =>
+                                          i === idx ? { ...r, parent_name: val } : r
+                                        )
+                                      );
+                                    }}
+                                    placeholder="ФИО родителя"
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 text-xs focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={row.remaining_lessons}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setMoyKlassRows((prev) =>
+                                        prev.map((r, i) =>
+                                          i === idx ? { ...r, remaining_lessons: val } : r
+                                        )
+                                      );
+                                    }}
+                                    className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-2 text-xs tabular-nums focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                                  />
+                                </td>
+                                <td className="p-1.5 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setMoyKlassRows((prev) =>
+                                        prev.length > 1
+                                          ? prev.filter((_, i) => i !== idx)
+                                          : [
+                                              {
+                                                child_name: '',
+                                                phone: '',
+                                                email: '',
+                                                max_contact: '',
+                                                age: '10',
+                                                parent_name: '',
+                                                remaining_lessons: '0',
+                                              },
+                                            ]
+                                      )
+                                    }
+                                    aria-label="Удалить строку"
+                                    className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-[#9CA3AF] hover:bg-[#FEF2F2] hover:text-[#991B1B]"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMoyKlassRows((prev) => [
+                              ...prev,
+                              {
+                                child_name: '',
+                                phone: '',
+                                email: '',
+                                max_contact: '',
+                                age: '10',
+                                parent_name: '',
+                                remaining_lessons: '0',
+                              },
+                            ])
+                          }
+                          className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
+                        >
+                          <Plus className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={2} />
+                          Добавить строку
+                        </button>
+
+                        <button
+                          type="submit"
+                          className="inline-flex min-h-[42px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-4 text-xs font-semibold text-white shadow-sm hover:bg-[#B05B20]"
+                        >
+                          <FileSpreadsheet className="h-4 w-4" strokeWidth={1.75} />
+                          Импортировать таблицу в базу
+                        </button>
+                      </div>
                     </form>
                   </div>
 
@@ -2903,133 +3536,6 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       </div>
                     )}
                   </div>
-
-                  {/* Legal Documents Management (Offer, Personal Data, Privacy Policy) */}
-                  <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] lg:col-span-2">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.75} />
-                      <h3 className="font-display text-base font-semibold text-[#111827]">
-                        Оферта, обработка персональных данных и политика конфиденциальности
-                      </h3>
-                    </div>
-                    <p className="mt-1 text-xs text-[#6B7280]">
-                      Эти документы отображаются в личном кабинете родителей и перед переходом к
-                      онлайн-оплате. Можно загрузить свой PDF / DOCX / изображение или
-                      отредактировать текст.
-                    </p>
-
-                    <div className="mt-4 space-y-3">
-                      {data.legal_documents.map((doc) => {
-                        const isEditingThis = editingLegalKey === doc.doc_key;
-                        return (
-                          <div
-                            key={doc.doc_key}
-                            className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4"
-                          >
-                            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                              <div>
-                                <div className="text-sm font-semibold text-[#111827]">{doc.title}</div>
-                                <div className="mt-0.5 text-xs text-[#6B7280]">
-                                  {doc.has_file === 1 && doc.original_name
-                                    ? `Прикреплён файл: ${doc.original_name}`
-                                    : 'Используется встроенный текст (файл не загружен)'}
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-2">
-                                <a
-                                  href={`/api/public/legal/${doc.doc_key}/file?inline=1`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex min-h-[38px] items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
-                                >
-                                  <Eye className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.5} />
-                                  Открыть
-                                </a>
-
-                                <label className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-lg bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]">
-                                  <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                  <span>Загрузить файл</span>
-                                  <input
-                                    type="file"
-                                    accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp"
-                                    onChange={(e) => {
-                                      const selected = e.target.files?.[0];
-                                      e.target.value = '';
-                                      void handleUploadLegalFile(doc.doc_key, selected);
-                                    }}
-                                    className="hidden"
-                                  />
-                                </label>
-
-                                {doc.has_file === 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleDeleteLegalFile(doc.doc_key)}
-                                    className="inline-flex min-h-[38px] cursor-pointer items-center gap-1 rounded-lg border border-[#FECACA] bg-white px-3 text-xs font-medium text-[#991B1B] hover:bg-[#FEF2F2]"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                    Убрать файл
-                                  </button>
-                                )}
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (isEditingThis) {
-                                      setEditingLegalKey(null);
-                                    } else {
-                                      setEditingLegalKey(doc.doc_key);
-                                      setLegalTitleInput(doc.title);
-                                      setLegalTextInput(doc.content_text);
-                                    }
-                                  }}
-                                  className="inline-flex min-h-[38px] cursor-pointer items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-3 text-xs font-medium text-[#111827] hover:bg-[#F3F4F6]"
-                                >
-                                  <Pencil className="h-3.5 w-3.5 text-[#6B7280]" strokeWidth={1.5} />
-                                  {isEditingThis ? 'Свернуть текст' : 'Редактировать текст'}
-                                </button>
-                              </div>
-                            </div>
-
-                            {isEditingThis && (
-                              <div className="mt-3 space-y-2.5 border-t border-[#E5E7EB] pt-3">
-                                <input
-                                  type="text"
-                                  value={legalTitleInput}
-                                  onChange={(e) => setLegalTitleInput(e.target.value)}
-                                  placeholder="Заголовок документа"
-                                  className="min-h-[40px] w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:outline-none"
-                                />
-                                <textarea
-                                  rows={6}
-                                  value={legalTextInput}
-                                  onChange={(e) => setLegalTextInput(e.target.value)}
-                                  className="w-full rounded-xl border border-[#E5E7EB] bg-white p-3 text-xs leading-relaxed text-[#111827] focus:border-[#C86D2D] focus:outline-none"
-                                />
-                                <div className="flex justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingLegalKey(null)}
-                                    className="min-h-[38px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-medium text-[#6B7280]"
-                                  >
-                                    Отмена
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleSaveLegalText(doc.doc_key)}
-                                    className="min-h-[38px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-xs font-semibold text-white hover:bg-[#B05B20]"
-                                  >
-                                    Сохранить текст
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -3093,6 +3599,265 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
           </div>
         </div>
       )}
+
+      {/* Карточка ученика (Student Profile & Login Link Modal) */}
+      {selectedStudentCard &&
+        (() => {
+          const selectedFamily = data?.families.find(
+            (f) => f.id === selectedStudentCard.familyId
+          );
+          if (!selectedFamily) return null;
+          const personalLink = `${window.location.origin}/lk/${selectedFamily.access_token}`;
+
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Карточка ученика"
+            >
+              <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-xl">
+                <div className="flex items-center justify-between gap-3 border-b border-[#E5E7EB] bg-[#F9FAFB] px-5 py-4">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-[#C86D2D]">
+                      Карточка ученика «Ясна»
+                    </div>
+                    <h3 className="truncate font-display text-lg font-bold text-[#111827]">
+                      {cardChildName || selectedFamily.parent_name}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStudentCard(null)}
+                    aria-label="Закрыть карточку ученика"
+                    className="inline-flex min-h-[40px] min-w-[40px] cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#111827]"
+                  >
+                    <X className="h-4 w-4" strokeWidth={1.5} />
+                  </button>
+                </div>
+
+                <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                  {/* Personal Login Link Box */}
+                  <div className="rounded-xl border border-[#F3E2D3] bg-[#FDF4ED] p-4">
+                    <div className="text-xs font-semibold text-[#C86D2D]">
+                      Ссылка для входа в личный кабинет ученика
+                    </div>
+                    <div className="mt-1.5 break-all rounded-lg border border-[#F3E2D3] bg-white px-3 py-2 font-mono text-xs text-[#111827] select-all">
+                      {personalLink}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyLink(selectedFamily.access_token)}
+                        className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3.5 text-xs font-semibold text-white hover:bg-[#B05B20]"
+                      >
+                        <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        Скопировать ссылку
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudentCard(null);
+                          onNavigate(`/lk/${selectedFamily.access_token}`);
+                        }}
+                        className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-semibold text-[#111827] hover:bg-[#F9FAFB]"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.75} />
+                        Открыть ЛК ученика
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Quick Switch Between Students in Family (if multiple) */}
+                  {selectedFamily.children.length > 1 && (
+                    <div>
+                      <div className="text-xs font-medium text-[#6B7280]">
+                        Ученики в этом кабинете:
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {selectedFamily.children.map((ch) => (
+                          <button
+                            key={ch.id}
+                            type="button"
+                            onClick={() => {
+                              setCardChildId(ch.id);
+                              setCardChildName(ch.name);
+                              setCardChildAge(ch.age);
+                            }}
+                            className={`cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                              cardChildId === ch.id
+                                ? 'border-[#C86D2D] bg-[#C86D2D] text-white'
+                                : 'border-[#E5E7EB] bg-[#F9FAFB] text-[#111827] hover:bg-[#F3F4F6]'
+                            }`}
+                          >
+                            {ch.name} ({pluralizeYears(ch.age)})
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Student Details Summary Pills */}
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+                      <div className="text-[11px] text-[#6B7280]">Возраст</div>
+                      <div className="mt-0.5 font-display text-sm font-bold text-[#111827]">
+                        {pluralizeYears(cardChildAge)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+                      <div className="text-[11px] text-[#6B7280]">Мессенджер MAX</div>
+                      <div className="mt-0.5 truncate font-display text-sm font-bold text-[#111827]">
+                        {cardMax || 'Не указан'}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+                      <div className="text-[11px] text-[#6B7280]">Почта (Email)</div>
+                      <div className="mt-0.5 truncate font-display text-sm font-bold text-[#111827]">
+                        {cardEmail || 'Не указана'}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+                      <div className="text-[11px] text-[#6B7280]">Остаток занятий</div>
+                      <div className="mt-0.5 font-display text-sm font-bold text-[#C86D2D]">
+                        {pluralizeLessons(selectedFamily.remaining_lessons)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Editable Student Card Form */}
+                  <form onSubmit={handleSaveStudentCard} className="space-y-4">
+                    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="card-child-name"
+                          className="block text-xs font-medium text-[#374151]"
+                        >
+                          ФИО ученика
+                        </label>
+                        <input
+                          id="card-child-name"
+                          type="text"
+                          required
+                          value={cardChildName}
+                          onChange={(e) => setCardChildName(e.target.value)}
+                          placeholder="ФИО ученика"
+                          className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="card-child-age"
+                          className="block text-xs font-medium text-[#374151]"
+                        >
+                          Возраст (лет)
+                        </label>
+                        <input
+                          id="card-child-age"
+                          type="number"
+                          min={3}
+                          max={99}
+                          required
+                          value={cardChildAge}
+                          onChange={(e) => setCardChildAge(Number(e.target.value))}
+                          className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] tabular-nums focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="card-parent-phone"
+                          className="block text-xs font-medium text-[#374151]"
+                        >
+                          Номер телефона
+                        </label>
+                        <input
+                          id="card-parent-phone"
+                          type="tel"
+                          required
+                          value={cardPhone}
+                          onChange={(e) => setCardPhone(e.target.value)}
+                          placeholder="+7 (922) 000-00-00"
+                          className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="card-parent-email"
+                          className="block text-xs font-medium text-[#374151]"
+                        >
+                          Почта (Email)
+                        </label>
+                        <input
+                          id="card-parent-email"
+                          type="email"
+                          value={cardEmail}
+                          onChange={(e) => setCardEmail(e.target.value)}
+                          placeholder="student@example.ru"
+                          className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="card-parent-max"
+                          className="block text-xs font-medium text-[#374151]"
+                        >
+                          Мессенджер MAX
+                        </label>
+                        <input
+                          id="card-parent-max"
+                          type="text"
+                          value={cardMax}
+                          onChange={(e) => setCardMax(e.target.value)}
+                          placeholder="@username или номер в MAX"
+                          className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="card-parent-name"
+                          className="block text-xs font-medium text-[#374151]"
+                        >
+                          Контактное лицо / родитель
+                        </label>
+                        <input
+                          id="card-parent-name"
+                          type="text"
+                          required
+                          value={cardParentName}
+                          onChange={(e) => setCardParentName(e.target.value)}
+                          placeholder="ФИО"
+                          className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#F3F4F6] pt-4">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStudentCard(null)}
+                        className="min-h-[42px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-white px-4 text-xs font-medium text-[#6B7280] hover:bg-[#F9FAFB]"
+                      >
+                        Закрыть
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingStudentCard}
+                        className="min-h-[42px] cursor-pointer rounded-xl bg-[#C86D2D] px-5 text-xs font-semibold text-white hover:bg-[#B05B20] disabled:opacity-50"
+                      >
+                        {savingStudentCard ? 'Сохранение...' : 'Сохранить карточку'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 };
