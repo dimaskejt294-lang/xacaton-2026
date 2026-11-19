@@ -14,6 +14,7 @@ export interface WorkshopSettings {
   show_hero_groups?: number;
   hero_groups_text?: string;
   show_hero_free_cancel?: number;
+  default_group_capacity?: number;
 }
 
 export interface Tariff {

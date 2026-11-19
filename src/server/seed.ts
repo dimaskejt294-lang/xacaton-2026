@@ -34,38 +34,9 @@ function getSurgutCalendarDate(offsetDays = 0): {
   };
 }
 
-const WEEKEND_PROJECTS = [
-  {
-    title: 'Столярное дело: полка из массива',
-    description:
-      'Групповое занятие (2 часа). Разметка, пиление сосны, шлифовка и сборка настенной полки своими руками.',
-  },
-  {
-    title: 'Скворечник из кедра',
-    description:
-      'Групповое занятие (2 часа) для детей от 6 лет и взрослых. Все материалы, инструменты и защита выдаются.',
-  },
-  {
-    title: 'Шкатулка с секретом',
-    description:
-      'Групповое занятие (2 часа). Работа со столярным клеем, петлями и ручным инструментом под контролем мастера.',
-  },
-  {
-    title: 'Подставка под телефон из дуба',
-    description:
-      'Групповое занятие (2 часа). Знакомство с инструментами, аккуратный распил, шлифовка и покрытие маслом.',
-  },
-  {
-    title: 'Деревянный органайзер для стола',
-    description:
-      'Групповое занятие (2 часа). Пиление, подгонка деталей, сборка на шкантах и финишная отделка.',
-  },
-  {
-    title: 'Кормушка для птиц из лиственницы',
-    description:
-      'Групповое занятие (2 часа). Разметка по шаблону, пиление, шлифовка и надёжная сборка.',
-  },
-] as const;
+const GROUP_LESSON_TITLE = 'Групповое занятие';
+const GROUP_LESSON_DESCRIPTION =
+  'Групповое занятие (2 часа). Ребята и взрослые от 6 лет работают над своими проектами из дерева под руководством мастера. Все материалы и инструменты включены.';
 
 export function buildUpcomingWeekendGroupSlots(weeksAhead = 3): Array<{
   title: string;
@@ -73,13 +44,17 @@ export function buildUpcomingWeekendGroupSlots(weeksAhead = 3): Array<{
   startIso: string;
 }> {
   const minStartMs = Date.now() + 15 * 60 * 1000;
-  const maxDays = weeksAhead * 7 + 7;
+  const maxDays = weeksAhead * 7 + 14;
   const slots: Array<{ title: string; description: string; startIso: string }> = [];
   let weekendDaysCollected = 0;
 
   for (let offset = 0; offset < maxDays && weekendDaysCollected < weeksAhead * 2; offset += 1) {
     const cal = getSurgutCalendarDate(offset);
     if (cal.dow !== 6 && cal.dow !== 0) {
+      continue;
+    }
+    // 29 ноября 2026 года занятий нет
+    if (cal.year === 2026 && cal.month0 === 10 && cal.day === 29) {
       continue;
     }
 
@@ -89,10 +64,9 @@ export function buildUpcomingWeekendGroupSlots(weeksAhead = 3): Array<{
       if (new Date(startIso).getTime() <= minStartMs) {
         continue;
       }
-      const project = WEEKEND_PROJECTS[slots.length % WEEKEND_PROJECTS.length];
       slots.push({
-        title: project.title,
-        description: project.description,
+        title: GROUP_LESSON_TITLE,
+        description: GROUP_LESSON_DESCRIPTION,
         startIso,
       });
       addedOnDay += 1;
@@ -174,8 +148,12 @@ export function seedInitialDataIfEmpty(): void {
     const initialPassword = config.masterPassword || '12345678';
     const passwordHash = hashPassword(initialPassword);
     db.prepare(
-      `INSERT INTO workshop_settings (id, free_cancel_hours, charge_on_miss, charge_on_late_cancel, master_password_hash)
-       VALUES (1, 24, 1, 1, ?)`
+      `INSERT INTO workshop_settings (
+         id, free_cancel_hours, charge_on_miss, charge_on_late_cancel, master_password_hash,
+         show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
+         show_hero_groups, hero_groups_text, show_hero_free_cancel, default_group_capacity
+       )
+       VALUES (1, 24, 1, 1, ?, 1, 'От 6 лет', 1, '2 часа', 1, 'до 4 мест', 0, 4)`
     ).run(passwordHash);
   }
 
@@ -198,10 +176,15 @@ export function seedInitialDataIfEmpty(): void {
     const nowIso = new Date().toISOString();
 
     // 1. Tariffs
+    tx.prepare(
+      `INSERT INTO tariffs (title, lessons_count, price, validity_days, is_active)
+       VALUES ('Пробное занятие', 1, 1000.00, 30, 1)`
+    ).run();
+
     const singleTariffRes = tx
       .prepare(
         `INSERT INTO tariffs (title, lessons_count, price, validity_days, is_active)
-         VALUES ('Разовое занятие', 1, 1200.00, 30, 1)`
+         VALUES ('Разовое занятие', 1, 1600.00, 30, 1)`
       )
       .run();
     const singleTariffId = Number(singleTariffRes.lastInsertRowid);
@@ -209,15 +192,10 @@ export function seedInitialDataIfEmpty(): void {
     const sub4Res = tx
       .prepare(
         `INSERT INTO tariffs (title, lessons_count, price, validity_days, is_active)
-         VALUES ('Абонемент на 4 занятия', 4, 4200.00, 45, 1)`
+         VALUES ('Абонемент на 4 занятия', 4, 5500.00, 45, 1)`
       )
       .run();
     const sub4TariffId = Number(sub4Res.lastInsertRowid);
-
-    tx.prepare(
-      `INSERT INTO tariffs (title, lessons_count, price, validity_days, is_active)
-       VALUES ('Абонемент на 8 занятий', 8, 7800.00, 60, 1)`
-    ).run();
 
     // 2. Family 1: Елена Смирнова (2 children: Артём 8 лет, Соня 10 лет)
     const token1 = generateAccessToken();
@@ -261,7 +239,7 @@ export function seedInitialDataIfEmpty(): void {
     const fam3Res = tx
       .prepare(
         `INSERT INTO families (parent_name, phone, access_token, money_balance, created_at)
-         VALUES ('Марина Козлова', '+7 (922) 400-55-66', ?, -1200.00, ?)`
+         VALUES ('Марина Козлова', '+7 (922) 400-55-66', ?, -1600.00, ?)`
       )
       .run(token3, nowIso);
     const fam3Id = Number(fam3Res.lastInsertRowid);
@@ -280,7 +258,7 @@ export function seedInitialDataIfEmpty(): void {
 
     tx.prepare(
       `INSERT INTO payments (family_id, tariff_id, external_payment_id, amount, lessons_count, payment_method, status, receipt_url, created_at, paid_at)
-       VALUES (?, ?, NULL, 4200.00, 4, 'transfer', 'succeeded', 'https://lknpd.nalog.ru/api/v1/receipt/demo-yasna-4200', ?, ?)`
+       VALUES (?, ?, NULL, 5500.00, 4, 'transfer', 'succeeded', 'https://lknpd.nalog.ru/api/v1/receipt/demo-yasna-5500', ?, ?)`
     ).run(fam2Id, sub4TariffId, nowIso, nowIso);
 
     tx.prepare(
@@ -290,14 +268,14 @@ export function seedInitialDataIfEmpty(): void {
 
     tx.prepare(
       `INSERT INTO payments (family_id, tariff_id, external_payment_id, amount, lessons_count, payment_method, status, created_at, paid_at)
-       VALUES (?, ?, NULL, 1200.00, 1, 'cash', 'succeeded', ?, ?)`
+       VALUES (?, ?, NULL, 1600.00, 1, 'cash', 'succeeded', ?, ?)`
     ).run(fam3Id, singleTariffId, nowIso, nowIso);
 
     // 5. Real Weekend Group Schedule: Saturday & Sunday at 10:00, 13:00, 16:00 (Surgut UTC+5), 2 hours (120 min)
     const weekendSlots = buildUpcomingWeekendGroupSlots(3);
     const insertLessonStmt = tx.prepare(
       `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price, description)
-       VALUES (?, 'group', ?, 120, 4, 1200.00, ?)`
+       VALUES (?, 'group', ?, 120, 4, 1600.00, ?)`
     );
     let firstUpcomingLessonId: number | null = null;
     for (const slot of weekendSlots) {
@@ -311,7 +289,7 @@ export function seedInitialDataIfEmpty(): void {
     const pastLessonRes = tx
       .prepare(
         `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price, description)
-         VALUES ('Подставка под телефон из дуба', 'group', ?, 120, 4, 1200.00, 'Первое знакомство с инструментами, распил и финишное покрытие маслом.')`
+         VALUES ('Групповое занятие', 'group', ?, 120, 4, 1600.00, 'Первое знакомство с инструментами, работа над своим проектом из дерева.')`
       )
       .run(getLastPastWeekendDateIso());
     const pastLessonId = Number(pastLessonRes.lastInsertRowid);

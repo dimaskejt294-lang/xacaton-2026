@@ -151,14 +151,16 @@ parentRouter.get('/:token', parentReadLimiter, (req, res, next) => {
     const unreadCount = notifications.filter((n) => n.is_read === 0).length;
 
     const tariffs = db
-      .prepare('SELECT id, title, lessons_count, price, validity_days FROM tariffs WHERE is_active = 1 ORDER BY lessons_count ASC')
+      .prepare(
+        'SELECT id, title, lessons_count, price, validity_days FROM tariffs WHERE is_active = 1 ORDER BY lessons_count ASC, price ASC'
+      )
       .all();
 
     const settings = db
       .prepare(
         `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
                 show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
-                show_hero_groups, hero_groups_text, show_hero_free_cancel
+                show_hero_groups, hero_groups_text, show_hero_free_cancel, default_group_capacity
          FROM workshop_settings WHERE id = 1`
       )
       .get();
@@ -232,14 +234,10 @@ parentRouter.get('/:token', parentReadLimiter, (req, res, next) => {
 parentRouter.put('/:token/profile', parentActionLimiter, (req, res, next) => {
   try {
     const family = resolveFamilyByToken(req.params.token);
-    const fullName = String(req.body?.full_name ?? req.body?.parent_name ?? '')
+    const parentName = String(req.body?.parent_name ?? req.body?.full_name ?? '')
       .replace(/[\u0000-\u001F\u007F]/g, ' ')
       .trim()
       .slice(0, 120);
-    const childName = String(req.body?.child_name ?? fullName)
-      .replace(/[\u0000-\u001F\u007F]/g, ' ')
-      .trim()
-      .slice(0, 80);
     const phone = String(req.body?.phone ?? '')
       .replace(/[\u0000-\u001F\u007F]/g, ' ')
       .trim()
@@ -252,47 +250,112 @@ parentRouter.put('/:token/profile', parentActionLimiter, (req, res, next) => {
       .replace(/[\u0000-\u001F\u007F]/g, ' ')
       .trim()
       .slice(0, 120);
-    const age = Number(req.body?.age ?? 10);
-    const childId = req.body?.child_id ? Number(req.body.child_id) : null;
 
-    if (!fullName) {
-      throw new HttpError(400, 'Укажите ваше ФИО');
+    const rawChildren = Array.isArray(req.body?.children) ? req.body.children : null;
+    const singleChildName = String(req.body?.child_name ?? parentName)
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .trim()
+      .slice(0, 80);
+    const singleAge = Number(req.body?.age ?? 10);
+    const singleChildId = req.body?.child_id ? Number(req.body.child_id) : null;
+
+    if (!parentName) {
+      throw new HttpError(400, 'Укажите имя и фамилию родителя');
     }
     if (!phone || phone.length < 5) {
       throw new HttpError(400, 'Укажите корректный номер телефона');
     }
-    if (!Number.isInteger(age) || age < 3 || age > 99) {
-      throw new HttpError(400, 'Укажите корректный возраст ученика (от 3 до 99 лет)');
+
+    const parsedChildren: Array<{ id: number | null; name: string; age: number }> = [];
+    if (rawChildren) {
+      for (const entry of rawChildren.slice(0, 10)) {
+        if (!entry || typeof entry !== 'object') continue;
+        const eObj = entry as { id?: unknown; name?: unknown; age?: unknown };
+        const name = String(eObj.name ?? '')
+          .replace(/[\u0000-\u001F\u007F]/g, ' ')
+          .trim()
+          .slice(0, 80);
+        const age = Number(eObj.age ?? 10);
+        if (!name) {
+          throw new HttpError(400, 'Укажите имя и фамилию каждого ребёнка');
+        }
+        if (!Number.isInteger(age) || age < 3 || age > 99) {
+          throw new HttpError(400, 'Укажите корректный возраст ученика (от 3 до 99 лет)');
+        }
+        const idNum = eObj.id ? Number(eObj.id) : null;
+        parsedChildren.push({
+          id: idNum && Number.isInteger(idNum) && idNum > 0 ? idNum : null,
+          name,
+          age,
+        });
+      }
+      if (parsedChildren.length === 0) {
+        throw new HttpError(400, 'Добавьте хотя бы одного ученика');
+      }
+    } else {
+      if (!Number.isInteger(singleAge) || singleAge < 3 || singleAge > 99) {
+        throw new HttpError(400, 'Укажите корректный возраст ученика (от 3 до 99 лет)');
+      }
+      parsedChildren.push({
+        id: singleChildId,
+        name: singleChildName || parentName,
+        age: singleAge,
+      });
     }
 
     const db = getDb();
+    const nowIso = new Date().toISOString();
     db.prepare(
-      'UPDATE families SET parent_name = ?, phone = ?, email = ?, max_contact = ? WHERE id = ?'
-    ).run(fullName, phone, email, maxContact, family.id);
+      `UPDATE families
+       SET parent_name = ?, phone = ?, email = ?, max_contact = ?,
+           consented_at = COALESCE(consented_at, ?)
+       WHERE id = ?`
+    ).run(parentName, phone, email, maxContact, nowIso, family.id);
 
     const existingChildren = db
       .prepare('SELECT id FROM children WHERE family_id = ? ORDER BY id ASC')
       .all(family.id) as Array<{ id: number }>;
+    const existingIds = new Set(existingChildren.map((c) => c.id));
 
-    const targetChildId =
-      childId && existingChildren.some((c) => c.id === childId)
-        ? childId
-        : existingChildren[0]?.id ?? null;
-
-    if (targetChildId) {
-      db.prepare('UPDATE children SET name = ?, age = ? WHERE id = ? AND family_id = ?').run(
-        childName || fullName,
-        age,
-        targetChildId,
-        family.id
-      );
+    if (rawChildren) {
+      for (const child of parsedChildren) {
+        if (child.id && existingIds.has(child.id)) {
+          db.prepare('UPDATE children SET name = ?, age = ? WHERE id = ? AND family_id = ?').run(
+            child.name,
+            child.age,
+            child.id,
+            family.id
+          );
+        } else {
+          db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
+            family.id,
+            child.name,
+            child.age,
+            null
+          );
+        }
+      }
     } else {
-      db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
-        family.id,
-        childName || fullName,
-        age,
-        null
-      );
+      const targetChildId =
+        singleChildId && existingIds.has(singleChildId)
+          ? singleChildId
+          : existingChildren[0]?.id ?? null;
+
+      if (targetChildId) {
+        db.prepare('UPDATE children SET name = ?, age = ? WHERE id = ? AND family_id = ?').run(
+          parsedChildren[0].name,
+          parsedChildren[0].age,
+          targetChildId,
+          family.id
+        );
+      } else {
+        db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
+          family.id,
+          parsedChildren[0].name,
+          parsedChildren[0].age,
+          null
+        );
+      }
     }
 
     res.json({ ok: true });

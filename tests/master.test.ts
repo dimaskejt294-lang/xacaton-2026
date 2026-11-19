@@ -463,4 +463,204 @@ describe('Master routes: tariffs, direct subscriptions & lesson editing', () => 
       .get() as { cnt: number };
     expect(rows.cnt).toBe(totalFamilies);
   });
+
+  it('seeds updated tariffs, group lesson titles, skips 2026-11-29, supports cancel-date, custom 5000 RUB payment & configurable capacity', async () => {
+    const db = getDb();
+
+    const tariffs = db
+      .prepare('SELECT id, title, lessons_count, price FROM tariffs WHERE is_active = 1 ORDER BY lessons_count ASC, price ASC')
+      .all() as Array<{ id: number; title: string; lessons_count: number; price: number }>;
+
+    expect(tariffs.some((t) => t.title === 'Пробное занятие' && t.price === 1000)).toBe(true);
+    expect(tariffs.some((t) => t.title === 'Разовое занятие' && t.price === 1600)).toBe(true);
+    const tariff4 = tariffs.find((t) => t.lessons_count === 4);
+    expect(tariff4?.price).toBe(5500);
+    expect(tariffs.some((t) => t.lessons_count === 8)).toBe(false);
+
+    // Ensure no seeded slots fall on 2026-11-29 in Surgut
+    const nov29Slots = db
+      .prepare(
+        `SELECT COUNT(*) AS cnt FROM lessons
+         WHERE start_time >= '2026-11-28T19:00:00.000Z'
+           AND start_time < '2026-11-29T19:00:00.000Z'`
+      )
+      .get() as { cnt: number };
+    expect(nov29Slots.cnt).toBe(0);
+
+    // Record manual payment for 4-lesson tariff at regular-client price 5000 RUB
+    const beforeLessons = getActiveLessonsRemaining(db, family1Id);
+    const payRes = await fetch(`${baseUrl}/api/master/payments/manual`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({
+        family_id: family1Id,
+        tariff_id: tariff4?.id,
+        amount: 5000,
+        payment_method: 'cash',
+      }),
+    });
+    expect(payRes.status).toBe(201);
+    const payBody = (await payRes.json()) as { payment_id: number };
+    const paymentRow = db
+      .prepare('SELECT amount, lessons_count, tariff_id FROM payments WHERE id = ?')
+      .get(payBody.payment_id) as { amount: number; lessons_count: number; tariff_id: number };
+    expect(paymentRow.amount).toBe(5000);
+    expect(paymentRow.lessons_count).toBe(4);
+    expect(paymentRow.tariff_id).toBe(tariff4?.id);
+    expect(getActiveLessonsRemaining(db, family1Id)).toBe(beforeLessons + 4);
+
+    // Cancel a specific date (2026-12-16) while leaving other dates intact
+    const slot1 = new Date('2026-12-16T10:00:00+05:00').toISOString();
+    const slot2 = new Date('2026-12-16T13:00:00+05:00').toISOString();
+    const slotOtherDay = new Date('2026-12-17T10:00:00+05:00').toISOString();
+
+    const l1 = Number(
+      db
+        .prepare(
+          `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price)
+           VALUES ('Групповое занятие', 'group', ?, 120, 4, 1600)`
+        )
+        .run(slot1).lastInsertRowid
+    );
+    const l2 = Number(
+      db
+        .prepare(
+          `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price)
+           VALUES ('Групповое занятие', 'group', ?, 120, 4, 1600)`
+        )
+        .run(slot2).lastInsertRowid
+    );
+    const lKeep = Number(
+      db
+        .prepare(
+          `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price)
+           VALUES ('Групповое занятие', 'group', ?, 120, 4, 1600)`
+        )
+        .run(slotOtherDay).lastInsertRowid
+    );
+
+    createBooking({ lessonId: l1, childId: child1Id, familyIdConstraint: family1Id });
+
+    const cancelDateRes = await fetch(`${baseUrl}/api/master/lessons/cancel-date`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({ date: '2026-12-16' }),
+    });
+    expect(cancelDateRes.status).toBe(200);
+    const cancelDateBody = (await cancelDateRes.json()) as {
+      canceled_count: number;
+      canceled_bookings_count: number;
+    };
+    expect(cancelDateBody.canceled_count).toBe(2);
+    expect(cancelDateBody.canceled_bookings_count).toBe(1);
+
+    const checkL1 = db.prepare('SELECT is_canceled FROM lessons WHERE id = ?').get(l1) as { is_canceled: number };
+    const checkL2 = db.prepare('SELECT is_canceled FROM lessons WHERE id = ?').get(l2) as { is_canceled: number };
+    const checkKeep = db.prepare('SELECT is_canceled FROM lessons WHERE id = ?').get(lKeep) as { is_canceled: number };
+    expect(checkL1.is_canceled).toBe(1);
+    expect(checkL2.is_canceled).toBe(1);
+    expect(checkKeep.is_canceled).toBe(0);
+
+    // Update default_group_capacity and apply to upcoming group lessons
+    const capRes = await fetch(`${baseUrl}/api/master/settings`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({
+        free_cancel_hours: 24,
+        charge_on_miss: true,
+        charge_on_late_cancel: true,
+        default_group_capacity: 6,
+        apply_capacity_to_upcoming_groups: true,
+      }),
+    });
+    expect(capRes.status).toBe(200);
+    const updatedKeep = db.prepare('SELECT capacity FROM lessons WHERE id = ?').get(lKeep) as { capacity: number };
+    expect(updatedKeep.capacity).toBe(6);
+  });
+
+  it('attaches official legal PDFs and supports multi-child registration & profile updates', async () => {
+    const db = getDb();
+
+    const legalRes = await fetch(`${baseUrl}/api/public/legal`);
+    expect(legalRes.status).toBe(200);
+    const legalBody = (await legalRes.json()) as {
+      documents: Array<{ doc_key: string; has_file: number; mime_type: string | null }>;
+    };
+    const privacyDoc = legalBody.documents.find((d) => d.doc_key === 'privacy');
+    const pdDoc = legalBody.documents.find((d) => d.doc_key === 'personal_data');
+    expect(privacyDoc?.has_file).toBe(1);
+    expect(privacyDoc?.mime_type).toBe('application/pdf');
+    expect(pdDoc?.has_file).toBe(1);
+    expect(pdDoc?.mime_type).toBe('application/pdf');
+
+    const regRes = await fetch(`${baseUrl}/api/public/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        parent_name: 'Мария Потапова',
+        children: [
+          { name: 'Потапов Артём', age: 8 },
+          { name: 'Потапова Алиса', age: 11 },
+        ],
+        phone: '+79227684371',
+        email: 'potapova@example.com',
+        max_contact: '@mariya',
+        personal_data_consent: true,
+      }),
+    });
+    expect(regRes.status).toBe(201);
+    const regBody = (await regRes.json()) as { token: string };
+    expect(regBody.token).toBeTruthy();
+
+    const lkRes1 = await fetch(`${baseUrl}/api/lk/${encodeURIComponent(regBody.token)}`);
+    expect(lkRes1.status).toBe(200);
+    const lkBody1 = (await lkRes1.json()) as {
+      family: { parent_name: string; consented_at?: string | null };
+      children: Array<{ id: number; name: string; age: number }>;
+    };
+    expect(lkBody1.family.parent_name).toBe('Мария Потапова');
+    expect(lkBody1.children.map((c) => c.name)).toEqual(['Потапов Артём', 'Потапова Алиса']);
+
+    // Update existing children and add a 3rd child via PUT /api/lk/:token/profile
+    const updateRes = await fetch(
+      `${baseUrl}/api/lk/${encodeURIComponent(regBody.token)}/profile`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parent_name: 'Мария Потапова',
+          phone: '+79227684371',
+          email: 'potapova@example.com',
+          max_contact: '@mariya',
+          children: [
+            { id: lkBody1.children[0].id, name: 'Потапов Артём', age: 9 },
+            { id: lkBody1.children[1].id, name: 'Потапова Алиса', age: 11 },
+            { name: 'Потапов Тимофей', age: 6 },
+          ],
+        }),
+      }
+    );
+    expect(updateRes.status).toBe(200);
+
+    const famRow = db
+      .prepare('SELECT id FROM families WHERE access_token = ?')
+      .get(regBody.token) as { id: number };
+    const updatedKids = db
+      .prepare('SELECT name, age FROM children WHERE family_id = ? ORDER BY id ASC')
+      .all(famRow.id) as Array<{ name: string; age: number }>;
+    expect(updatedKids).toEqual([
+      { name: 'Потапов Артём', age: 9 },
+      { name: 'Потапова Алиса', age: 11 },
+      { name: 'Потапов Тимофей', age: 6 },
+    ]);
+  });
 });

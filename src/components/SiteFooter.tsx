@@ -1,10 +1,18 @@
-import { ExternalLink, MapPin, Phone } from 'lucide-react';
-import React from 'react';
+import { ExternalLink, FileText, MapPin, Phone } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import type { LegalDocKey, LegalDocumentItem } from '../types.ts';
 import { BrandLogo } from './BrandLogo.tsx';
+import { LegalDocumentModal } from './LegalDocumentModal.tsx';
 
 interface SiteFooterProps {
   onNavigate: (path: string) => void;
 }
+
+const FALLBACK_FOOTER_DOCS: Array<{ key: LegalDocKey; label: string }> = [
+  { key: 'offer', label: 'Публичная оферта' },
+  { key: 'privacy', label: 'Политика конфиденциальности' },
+  { key: 'personal_data', label: 'Согласие на обработку персональных данных' },
+];
 
 const SOCIAL_LINKS = [
   {
@@ -74,41 +82,93 @@ const SOCIAL_LINKS = [
 ] as const;
 
 export const SiteFooter: React.FC<SiteFooterProps> = ({ onNavigate }) => {
+  const [legalDocs, setLegalDocs] = useState<LegalDocumentItem[]>([]);
+  const [previewDoc, setPreviewDoc] = useState<LegalDocumentItem | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const loadLegal = async () => {
+      try {
+        const res = await fetch('/api/public/legal');
+        if (!res.ok) return;
+        const json = (await res.json()) as { documents?: LegalDocumentItem[] };
+        if (active && Array.isArray(json.documents)) {
+          setLegalDocs(json.documents);
+        }
+      } catch {
+        // Ignore silent footer fetch errors when offline
+      }
+    };
+    void loadLegal();
+
+    const handleUpdated = () => void loadLegal();
+    window.addEventListener('yasna-legal-updated', handleUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener('yasna-legal-updated', handleUpdated);
+    };
+  }, []);
+
+  const handleOpenLegalDoc = async (docKey: LegalDocKey) => {
+    const existing = legalDocs.find((d) => d.doc_key === docKey);
+    if (existing) {
+      setPreviewDoc(existing);
+      return;
+    }
+    try {
+      const res = await fetch('/api/public/legal');
+      if (res.ok) {
+        const json = (await res.json()) as { documents?: LegalDocumentItem[] };
+        if (Array.isArray(json.documents)) {
+          setLegalDocs(json.documents);
+          const found = json.documents.find((d) => d.doc_key === docKey);
+          if (found) {
+            setPreviewDoc(found);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fallback to direct file tab below
+    }
+    window.open(`/api/public/legal/${encodeURIComponent(docKey)}/file?inline=1`, '_blank', 'noopener');
+  };
+
   return (
-    <footer className="mt-12 border-t border-[#E5E7EB] bg-white/80">
-      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
+    <footer className="mt-8 overflow-x-clip border-t border-[#E5E7EB] bg-white/80 sm:mt-12">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-8">
+        <div className="flex flex-col justify-between gap-4 sm:gap-6 lg:flex-row lg:items-center">
           {/* Brand & Info */}
-          <div className="flex items-start gap-3.5">
-            <BrandLogo variant="theme" className="h-12 w-12 rounded-full" />
-            <div>
+          <div className="flex min-w-0 items-start gap-3">
+            <BrandLogo variant="theme" className="h-10 w-10 shrink-0 rounded-full sm:h-12 sm:w-12" />
+            <div className="min-w-0">
               <div className="font-display text-sm font-bold text-[#111827]">
                 Ясна — школа труда и столярная мастерская в Сургуте ☀️
               </div>
-              <p className="mt-1 max-w-xl text-xs leading-relaxed text-[#6B7280]">
+              <p className="mt-1 hidden max-w-xl text-xs leading-relaxed text-[#6B7280] sm:block">
                 Взрослые и дети от 6 лет: группы, индивидуальные занятия, семейные мастер-классы,
                 дни рождения и мастер-классы для компаний.
               </p>
-              <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[#6B7280]">
-                <span className="inline-flex items-center gap-1.5">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#6B7280] sm:mt-2.5 sm:gap-x-4 sm:gap-y-1.5">
+                <span className="inline-flex items-center gap-1">
                   <MapPin className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.75} />
                   г. Сургут, ул. 30 лет Победы, 21/3
                 </span>
                 <a
                   href="tel:+79124120005"
-                  className="inline-flex items-center gap-1.5 font-medium text-[#111827] hover:text-[#C86D2D] tabular-nums"
+                  className="inline-flex items-center gap-1 font-medium text-[#111827] hover:text-[#C86D2D] tabular-nums"
                 >
                   <Phone className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.75} />
                   +7 (912) 412-00-05
                 </a>
-                <span>Руководитель Денис Авимский</span>
+                <span className="hidden sm:inline">Руководитель Денис Авимский</span>
               </div>
             </div>
           </div>
 
           {/* Social Links & Quick Access */}
-          <div className="flex flex-col items-start gap-3 lg:items-end">
-            <div className="flex flex-wrap items-center gap-2" aria-label="Социальные сети и мессенджеры">
+          <div className="flex flex-col items-start gap-2.5 sm:gap-3 lg:items-end">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2" aria-label="Социальные сети и мессенджеры">
               {SOCIAL_LINKS.map((item) => (
                 <a
                   key={item.name}
@@ -117,7 +177,7 @@ export const SiteFooter: React.FC<SiteFooterProps> = ({ onNavigate }) => {
                   rel="noopener noreferrer"
                   title={item.title}
                   aria-label={item.title}
-                  className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-xs font-medium text-[#111827] transition-colors ${item.bgClass}`}
+                  className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 py-1.5 text-[11px] font-medium text-[#111827] transition-colors sm:min-h-[40px] sm:px-3 sm:py-2 sm:text-xs ${item.bgClass}`}
                 >
                   {item.icon}
                   <span>{item.name}</span>
@@ -143,7 +203,37 @@ export const SiteFooter: React.FC<SiteFooterProps> = ({ onNavigate }) => {
             </div>
           </div>
         </div>
+
+        {/* Pinned Legal Documents & Requisites Bottom Strip */}
+        <div className="mt-4 flex flex-col justify-between gap-2.5 border-t border-[#E5E7EB] pt-4 text-xs text-[#6B7280] sm:mt-6 sm:gap-3 sm:pt-5 md:flex-row md:items-center">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:gap-x-4 sm:gap-y-2">
+            {FALLBACK_FOOTER_DOCS.map((item) => {
+              const liveDoc = legalDocs.find((d) => d.doc_key === item.key);
+              const label = liveDoc?.title || item.label;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => void handleOpenLegalDoc(item.key)}
+                  className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-[#374151] underline decoration-[#D1D5DB] underline-offset-4 transition-colors hover:text-[#C86D2D] hover:decoration-[#C86D2D] sm:gap-1.5 sm:text-xs"
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-[#C86D2D]" strokeWidth={1.75} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="text-[11px] leading-relaxed text-[#6B7280] tabular-nums">
+            ИП Авимский Денис Вадимович · ОГРНИП 315860200003358 · ИНН 860230279565 ·{' '}
+            <a href="mailto:denis@avimskiy.ru" className="hover:text-[#C86D2D] hover:underline">
+              denis@avimskiy.ru
+            </a>
+          </div>
+        </div>
       </div>
+
+      <LegalDocumentModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
     </footer>
   );
 };

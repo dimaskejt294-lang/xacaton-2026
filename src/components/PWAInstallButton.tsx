@@ -78,12 +78,15 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
         onClick={() => void handleClick()}
         className={
           variant === 'cabinet'
-            ? 'inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3.5 text-xs font-semibold text-[#111827] shadow-sm transition-colors hover:bg-[#F9FAFB]'
-            : 'inline-flex min-h-[40px] shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-semibold text-[#111827] transition-colors hover:bg-[#F3F4F6]'
+            ? 'inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-semibold text-[#111827] shadow-sm transition-colors hover:bg-[#F9FAFB] sm:min-h-[40px] sm:gap-2 sm:px-3.5'
+            : 'inline-flex min-h-[40px] shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-2.5 text-xs font-semibold text-[#111827] transition-colors hover:bg-[#F3F4F6] sm:px-3'
         }
         title="Закрепить мастерскую «Ясна» на рабочем столе телефона или компьютера"
       >
-        <BrandLogo variant="red" className="h-5 w-5 rounded-full" />
+        <BrandLogo
+          variant="red"
+          className={variant === 'nav' ? 'hidden h-5 w-5 rounded-full sm:block' : 'h-5 w-5 rounded-full'}
+        />
         {isIOS ? (
           <Share className="h-3.5 w-3.5 text-[#C86D2D]" strokeWidth={1.75} />
         ) : (
@@ -157,15 +160,16 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
                   ) : (
                     <ol className="mt-4 space-y-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3.5 text-xs leading-relaxed text-[#374151]">
                       <li>
-                        1. В браузере Chrome / Яндекс / Safari нажмите на меню браузера (три точки
-                        или кнопку «Поделиться»).
+                        1. В браузере Chrome / Яндекс нажмите на меню браузера (три точки в углу).
                       </li>
                       <li>
                         2. Выберите <strong>«Установить приложение»</strong> или{' '}
                         <strong>«Добавить на главный экран»</strong>.
                       </li>
                       <li>
-                        3. На рабочем столе телефона появится иконка с логотипом «Ясна».
+                        3. Если Android / Play Защита покажет стандартную проверку веб-ярлыка —
+                        нажмите <strong>«Подробнее → Всё равно установить»</strong> или{' '}
+                        <strong>«ОК»</strong>, затем значок «Ясна» закрепится на рабочем столе.
                       </li>
                     </ol>
                   )}

@@ -242,8 +242,16 @@ export function createManualPayment(params: {
         throw new HttpError(404, 'Тариф не найден');
       }
       tariffId = tariff.id;
-      finalAmount = tariff.price;
-      finalLessons = tariff.lessons_count;
+      finalAmount =
+        params.amount !== undefined && Number.isFinite(params.amount) && params.amount > 0
+          ? Number(params.amount)
+          : tariff.price;
+      finalLessons =
+        params.lessonsCount !== undefined &&
+        Number.isInteger(params.lessonsCount) &&
+        params.lessonsCount >= 0
+          ? params.lessonsCount
+          : tariff.lessons_count;
     }
 
     if (!Number.isFinite(finalAmount) || finalAmount <= 0) {

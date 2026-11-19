@@ -89,13 +89,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   // Create / edit lesson state
   const [showNewLesson, setShowNewLesson] = useState(false);
   const [editingLessonId, setEditingLessonId] = useState<number | null>(null);
-  const [lessonTitle, setLessonTitle] = useState('');
+  const [lessonTitle, setLessonTitle] = useState('Групповое занятие');
   const [lessonType, setLessonType] = useState<LessonType>('group');
   const [lessonStart, setLessonStart] = useState(defaultNextWeekendDatetimeLocal);
   const [lessonDuration, setLessonDuration] = useState(120);
   const [lessonCapacity, setLessonCapacity] = useState(4);
-  const [lessonPrice, setLessonPrice] = useState(1200);
+  const [lessonPrice, setLessonPrice] = useState(1600);
   const [lessonDesc, setLessonDesc] = useState('');
+  const [showCancelDateBox, setShowCancelDateBox] = useState(false);
+  const [cancelDateInput, setCancelDateInput] = useState('');
 
   // Quick enroll per lesson
   const [enrollChildMap, setEnrollChildMap] = useState<Record<number, string>>({});
@@ -137,6 +139,12 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [tariffPrice, setTariffPrice] = useState(5800);
   const [tariffValidityDays, setTariffValidityDays] = useState(45);
 
+  const [editingTariffId, setEditingTariffId] = useState<number | null>(null);
+  const [editTariffTitle, setEditTariffTitle] = useState('');
+  const [editTariffLessons, setEditTariffLessons] = useState(4);
+  const [editTariffPrice, setEditTariffPrice] = useState(5500);
+  const [editTariffValidity, setEditTariffValidity] = useState(45);
+
   const [addSubFamilyId, setAddSubFamilyId] = useState<number | null>(null);
   const [subTariffChoice, setSubTariffChoice] = useState<string>('custom');
   const [subCustomTitle, setSubCustomTitle] = useState('Абонемент на 4 занятия');
@@ -146,7 +154,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   // Manual payment state
   const [payFamilyId, setPayFamilyId] = useState<string>('');
   const [payTariffId, setPayTariffId] = useState<string>('');
-  const [payCustomAmount, setPayCustomAmount] = useState('1200');
+  const [payTariffAmount, setPayTariffAmount] = useState<string>('');
+  const [payCustomAmount, setPayCustomAmount] = useState('1600');
   const [payCustomLessons, setPayCustomLessons] = useState('0');
   const [payMethod, setPayMethod] = useState<'cash' | 'transfer'>('cash');
 
@@ -163,13 +172,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const [freeCancelHours, setFreeCancelHours] = useState(24);
   const [chargeOnMiss, setChargeOnMiss] = useState(true);
   const [chargeOnLateCancel, setChargeOnLateCancel] = useState(true);
+  const [defaultGroupCapacity, setDefaultGroupCapacity] = useState(4);
+  const [applyCapacityToUpcoming, setApplyCapacityToUpcoming] = useState(false);
   const [showHeroAge, setShowHeroAge] = useState(true);
-  const [heroAgeText, setHeroAgeText] = useState('6–14 лет');
+  const [heroAgeText, setHeroAgeText] = useState('От 6 лет');
   const [showHeroDuration, setShowHeroDuration] = useState(true);
   const [heroDurationText, setHeroDurationText] = useState('2 часа');
   const [showHeroGroups, setShowHeroGroups] = useState(true);
-  const [heroGroupsText, setHeroGroupsText] = useState('2–4 места');
-  const [showHeroFreeCancel, setShowHeroFreeCancel] = useState(true);
+  const [heroGroupsText, setHeroGroupsText] = useState('до 4 мест');
+  const [showHeroFreeCancel, setShowHeroFreeCancel] = useState(false);
   const [csvImportText, setCsvImportText] = useState('');
   const [moyKlassRows, setMoyKlassRows] = useState<
     Array<{
@@ -255,13 +266,14 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       setFreeCancelHours(json.settings.free_cancel_hours);
       setChargeOnMiss(json.settings.charge_on_miss === 1);
       setChargeOnLateCancel(json.settings.charge_on_late_cancel === 1);
+      setDefaultGroupCapacity(json.settings.default_group_capacity ?? 4);
       setShowHeroAge((json.settings.show_hero_age ?? 1) === 1);
-      setHeroAgeText(json.settings.hero_age_text || '6–14 лет');
+      setHeroAgeText(json.settings.hero_age_text || 'От 6 лет');
       setShowHeroDuration((json.settings.show_hero_duration ?? 1) === 1);
       setHeroDurationText(json.settings.hero_duration_text || '2 часа');
       setShowHeroGroups((json.settings.show_hero_groups ?? 1) === 1);
-      setHeroGroupsText(json.settings.hero_groups_text || '2–4 места');
-      setShowHeroFreeCancel((json.settings.show_hero_free_cancel ?? 1) === 1);
+      setHeroGroupsText(json.settings.hero_groups_text || 'до 4 мест');
+      setShowHeroFreeCancel((json.settings.show_hero_free_cancel ?? 0) === 1);
 
       if (json.families.length > 0 && !payFamilyId) {
         setPayFamilyId(String(json.families[0].id));
@@ -269,6 +281,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       const firstActiveTariff = json.tariffs.find((t) => t.is_active !== 0) ?? json.tariffs[0];
       if (firstActiveTariff && !payTariffId) {
         setPayTariffId(String(firstActiveTariff.id));
+        setPayTariffAmount(String(firstActiveTariff.price));
       }
     } catch (err) {
       setBanner({
@@ -338,12 +351,12 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
 
   const resetLessonForm = () => {
     setEditingLessonId(null);
-    setLessonTitle('');
+    setLessonTitle('Групповое занятие');
     setLessonType('group');
     setLessonStart(defaultNextWeekendDatetimeLocal());
     setLessonDuration(120);
-    setLessonCapacity(4);
-    setLessonPrice(1200);
+    setLessonCapacity(defaultGroupCapacity);
+    setLessonPrice(1600);
     setLessonDesc('');
   };
 
@@ -414,6 +427,31 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
       return;
     }
     setBanner({ type: 'success', text: 'Занятие отменено, записанные семьи уведомлены.' });
+    await loadDashboard();
+  };
+
+  const handleCancelDate = async (dateKey: string) => {
+    setBanner(null);
+    const res = await masterFetch('/api/master/lessons/cancel-date', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: dateKey }),
+    });
+    const body = (await res.json()) as {
+      canceled_count?: number;
+      canceled_bookings_count?: number;
+      error?: string;
+    };
+    if (!res.ok) {
+      setBanner({ type: 'error', text: body.error || 'Не удалось отменить дату' });
+      return;
+    }
+    setShowCancelDateBox(false);
+    setCancelDateInput('');
+    setBanner({
+      type: 'success',
+      text: `Дата ${dateKey} отменена: снято занятий — ${body.canceled_count ?? 0}, отменённых записей — ${body.canceled_bookings_count ?? 0}. Остальное расписание сохранено.`,
+    });
     await loadDashboard();
   };
 
@@ -662,6 +700,38 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
     await loadDashboard();
   };
 
+  const startEditTariff = (t: MasterDashboardData['tariffs'][number]) => {
+    setEditingTariffId(t.id);
+    setEditTariffTitle(t.title);
+    setEditTariffLessons(t.lessons_count);
+    setEditTariffPrice(t.price);
+    setEditTariffValidity(t.validity_days);
+  };
+
+  const handleSaveTariffEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTariffId) return;
+    setBanner(null);
+    const res = await masterFetch(`/api/master/tariffs/${editingTariffId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: editTariffTitle,
+        lessons_count: editTariffLessons,
+        price: editTariffPrice,
+        validity_days: editTariffValidity,
+      }),
+    });
+    const body = (await res.json()) as { error?: string };
+    if (!res.ok) {
+      setBanner({ type: 'error', text: body.error || 'Не удалось обновить тариф' });
+      return;
+    }
+    setEditingTariffId(null);
+    setBanner({ type: 'success', text: 'Тариф обновлён.' });
+    await loadDashboard();
+  };
+
   const openGrantSubscription = (familyId: number) => {
     if (addSubFamilyId === familyId) {
       setAddSubFamilyId(null);
@@ -722,6 +792,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
   const handleManualPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     setBanner(null);
+    const parsedTariffAmount = Number(payTariffAmount);
     const payload =
       payTariffId === 'custom'
         ? {
@@ -733,6 +804,9 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         : {
             family_id: Number(payFamilyId),
             tariff_id: Number(payTariffId),
+            ...(Number.isFinite(parsedTariffAmount) && parsedTariffAmount > 0
+              ? { amount: parsedTariffAmount }
+              : {}),
             payment_method: payMethod,
           };
 
@@ -845,6 +919,8 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         free_cancel_hours: freeCancelHours,
         charge_on_miss: chargeOnMiss,
         charge_on_late_cancel: chargeOnLateCancel,
+        default_group_capacity: defaultGroupCapacity,
+        apply_capacity_to_upcoming_groups: applyCapacityToUpcoming,
         show_hero_age: showHeroAge,
         hero_age_text: heroAgeText,
         show_hero_duration: showHeroDuration,
@@ -854,12 +930,19 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
         show_hero_free_cancel: showHeroFreeCancel,
       }),
     });
-    const body = (await res.json()) as { error?: string };
+    const body = (await res.json()) as { updated_lessons_count?: number; error?: string };
     if (!res.ok) {
       setBanner({ type: 'error', text: body.error || 'Не удалось сохранить настройки' });
       return;
     }
-    setBanner({ type: 'success', text: 'Настройки мастерской и карточки на главной обновлены.' });
+    setApplyCapacityToUpcoming(false);
+    setBanner({
+      type: 'success',
+      text:
+        body.updated_lessons_count && body.updated_lessons_count > 0
+          ? `Настройки сохранены, вместимость обновлена у ${body.updated_lessons_count} будущих групповых занятий.`
+          : 'Настройки мастерской и карточки на главной обновлены.',
+    });
     await loadDashboard();
   };
 
@@ -1410,6 +1493,14 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
 
                       <button
                         type="button"
+                        onClick={() => setShowCancelDateBox((prev) => !prev)}
+                        className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#FECACA] bg-white px-3.5 text-sm font-medium text-[#991B1B] hover:bg-[#FEF2F2]"
+                      >
+                        Отменить дату
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           if (showNewLesson) {
                             setShowNewLesson(false);
@@ -1426,6 +1517,37 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       </button>
                     </div>
                   </div>
+
+                  {showCancelDateBox && (
+                    <div className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2]/60 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <div className="font-display text-sm font-semibold text-[#991B1B]">
+                            Отменить все занятия за выбранную дату
+                          </div>
+                          <p className="mt-0.5 text-xs text-[#6B7280]">
+                            Все слоты за этот день будут отменены, записанным семьям придёт уведомление без списания. Остальное расписание сохранится.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="date"
+                            value={cancelDateInput}
+                            onChange={(e) => setCancelDateInput(e.target.value)}
+                            className="min-h-[40px] rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm tabular-nums focus:border-[#C86D2D] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            disabled={!cancelDateInput}
+                            onClick={() => void handleCancelDate(cancelDateInput)}
+                            className="min-h-[40px] cursor-pointer rounded-xl bg-[#991B1B] px-4 text-xs font-semibold text-white hover:bg-[#7F1D1D] disabled:opacity-50"
+                          >
+                            Отменить дату
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {showNewLesson && (
                     <form
@@ -1447,7 +1569,15 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                             required
                             value={lessonTitle}
                             onChange={(e) => setLessonTitle(e.target.value)}
-                            placeholder="Например: Полка из массива"
+                            placeholder={
+                              lessonType === 'masterclass'
+                                ? 'Например: Полка из массива или скворечник'
+                                : lessonType === 'individual'
+                                  ? 'Индивидуальное занятие'
+                                  : lessonType === 'birthday'
+                                    ? 'День рождения в мастерской'
+                                    : 'Групповое занятие'
+                            }
                             className="mt-1 min-h-[44px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
                           />
                         </div>
@@ -1469,7 +1599,10 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                               } else if (editingLessonId === null) {
                                 if (nextType === 'birthday') setLessonCapacity(8);
                                 else if (nextType === 'masterclass') setLessonCapacity(6);
-                                else setLessonCapacity(4);
+                                else {
+                                  setLessonCapacity(defaultGroupCapacity);
+                                  if (!lessonTitle.trim()) setLessonTitle('Групповое занятие');
+                                }
                               }
                             }}
                             className="mt-1 min-h-[44px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:bg-white focus:outline-none"
@@ -1499,7 +1632,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                           <input
                             type="number"
                             min={1}
-                            max={20}
+                            max={100}
                             disabled={lessonType === 'individual'}
                             value={lessonType === 'individual' ? 1 : lessonCapacity}
                             onChange={(e) => setLessonCapacity(Number(e.target.value))}
@@ -1580,6 +1713,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       onConvertWaitlist={handleConvertWaitlist}
                       onEditLesson={startEditLesson}
                       onCancelLesson={handleCancelLesson}
+                      onCancelDate={handleCancelDate}
                       onCreateLessonOnDate={startCreateLessonOnDate}
                       onSelectStudent={openStudentCard}
                     />
@@ -2019,40 +2153,115 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                     <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                       {data.tariffs.map((t) => {
                         const active = t.is_active !== 0;
+                        const isEditingThis = editingTariffId === t.id;
+                        if (isEditingThis) {
+                          return (
+                            <form
+                              key={t.id}
+                              onSubmit={handleSaveTariffEdit}
+                              className="rounded-xl border border-[#C86D2D] bg-[#FDF4ED]/40 p-3 space-y-2"
+                            >
+                              <input
+                                type="text"
+                                required
+                                value={editTariffTitle}
+                                onChange={(e) => setEditTariffTitle(e.target.value)}
+                                className="min-h-[36px] w-full rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium"
+                                placeholder="Название тарифа"
+                              />
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={1000}
+                                  required
+                                  value={editTariffLessons}
+                                  onChange={(e) => setEditTariffLessons(Number(e.target.value))}
+                                  title="Занятий"
+                                  className="min-h-[36px] rounded-lg border border-[#E5E7EB] bg-white px-2 text-xs tabular-nums"
+                                />
+                                <input
+                                  type="number"
+                                  min={1}
+                                  step={50}
+                                  required
+                                  value={editTariffPrice}
+                                  onChange={(e) => setEditTariffPrice(Number(e.target.value))}
+                                  title="Цена (₽)"
+                                  className="min-h-[36px] rounded-lg border border-[#E5E7EB] bg-white px-2 text-xs tabular-nums"
+                                />
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={3650}
+                                  required
+                                  value={editTariffValidity}
+                                  onChange={(e) => setEditTariffValidity(Number(e.target.value))}
+                                  title="Дней (внутр.)"
+                                  className="min-h-[36px] rounded-lg border border-[#E5E7EB] bg-white px-2 text-xs tabular-nums"
+                                />
+                              </div>
+                              <div className="flex justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingTariffId(null)}
+                                  className="min-h-[32px] cursor-pointer rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs text-[#6B7280]"
+                                >
+                                  Отмена
+                                </button>
+                                <button
+                                  type="submit"
+                                  className="min-h-[32px] cursor-pointer rounded-lg bg-[#C86D2D] px-3 text-xs font-semibold text-white"
+                                >
+                                  Сохранить
+                                </button>
+                              </div>
+                            </form>
+                          );
+                        }
                         return (
                           <div
                             key={t.id}
-                            className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${
+                            className={`flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 ${
                               active
                                 ? 'border-[#E5E7EB] bg-[#F9FAFB]'
                                 : 'border-[#E5E7EB] bg-white opacity-60'
                             }`}
                           >
-                            <div>
-                              <div className="text-sm font-semibold text-[#111827]">{t.title}</div>
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[#111827]">{t.title}</div>
                               <div className="text-xs text-[#6B7280] tabular-nums">
-                                {pluralizeLessons(t.lessons_count)} · {formatMoney(t.price)} ·{' '}
-                                {t.validity_days} дн.
+                                {pluralizeLessons(t.lessons_count)} · {formatMoney(t.price)}
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => void handleToggleTariff(t.id)}
-                              className="inline-flex min-h-[36px] shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium text-[#6B7280] hover:text-[#111827]"
-                              title={active ? 'Скрыть с витрины' : 'Сделать активным'}
-                            >
-                              {active ? (
-                                <>
-                                  <EyeOff className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                  <span>Скрыть</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Eye className="h-3.5 w-3.5 text-[#065F46]" strokeWidth={1.5} />
-                                  <span className="text-[#065F46]">Показать</span>
-                                </>
-                              )}
-                            </button>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => startEditTariff(t)}
+                                className="inline-flex min-h-[36px] min-w-[36px] cursor-pointer items-center justify-center rounded-lg border border-[#E5E7EB] bg-white text-[#6B7280] hover:text-[#111827]"
+                                title="Редактировать тариф"
+                              >
+                                <Pencil className="h-3.5 w-3.5" strokeWidth={1.5} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleToggleTariff(t.id)}
+                                className="inline-flex min-h-[36px] shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-medium text-[#6B7280] hover:text-[#111827]"
+                                title={active ? 'Скрыть с витрины' : 'Сделать активным'}
+                              >
+                                {active ? (
+                                  <>
+                                    <EyeOff className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                    <span>Скрыть</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye className="h-3.5 w-3.5 text-[#065F46]" strokeWidth={1.5} />
+                                    <span className="text-[#065F46]">Показать</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -2462,7 +2671,14 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                         </label>
                         <select
                           value={payTariffId}
-                          onChange={(e) => setPayTariffId(e.target.value)}
+                          onChange={(e) => {
+                            const nextId = e.target.value;
+                            setPayTariffId(nextId);
+                            const matched = data.tariffs.find((t) => String(t.id) === nextId);
+                            if (matched) {
+                              setPayTariffAmount(String(matched.price));
+                            }
+                          }}
                           className="mt-1 min-h-[44px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm focus:border-[#C86D2D] focus:outline-none"
                         >
                           {data.tariffs
@@ -2502,7 +2718,37 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                       </div>
                     </div>
 
-                    {payTariffId === 'custom' && (
+                    {payTariffId !== 'custom' ? (
+                      <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+                        <div className="w-full sm:w-52">
+                          <label className="block text-xs font-medium text-[#6B7280]">
+                            Итоговая сумма для клиента (₽)
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            step={50}
+                            value={payTariffAmount}
+                            onChange={(e) => setPayTariffAmount(e.target.value)}
+                            className="mt-1 min-h-[40px] w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm font-semibold tabular-nums focus:border-[#C86D2D] focus:outline-none"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPayTariffAmount('5000')}
+                          className={`min-h-[40px] cursor-pointer rounded-xl border px-3.5 text-xs font-semibold transition-colors ${
+                            payTariffAmount === '5000'
+                              ? 'border-[#C86D2D] bg-[#FDF4ED] text-[#C86D2D]'
+                              : 'border-[#E5E7EB] bg-white text-[#111827] hover:border-[#C86D2D] hover:text-[#C86D2D]'
+                          }`}
+                        >
+                          Постоянный клиент: 5000 ₽
+                        </button>
+                        <span className="text-xs text-[#6B7280]">
+                          Можно вручную скорректировать цену тарифа для постоянного клиента.
+                        </span>
+                      </div>
+                    ) : (
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
                           <label className="block text-xs font-medium text-[#6B7280]">
@@ -2868,6 +3114,37 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
 
                       <div className="border-t border-[#F3F4F6] pt-4">
                         <div className="text-sm font-semibold text-[#111827]">
+                          Вместимость групп по умолчанию
+                        </div>
+                        <p className="mt-0.5 text-xs text-[#6B7280]">
+                          Используется при создании новых групповых занятий и при массовом обновлении будущих слотов.
+                        </p>
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={defaultGroupCapacity}
+                              onChange={(e) => setDefaultGroupCapacity(Number(e.target.value))}
+                              className="min-h-[42px] w-24 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm font-semibold tabular-nums focus:border-[#C86D2D] focus:outline-none"
+                            />
+                            <span className="text-sm text-[#374151]">мест в группе</span>
+                          </div>
+                          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#374151]">
+                            <input
+                              type="checkbox"
+                              checked={applyCapacityToUpcoming}
+                              onChange={(e) => setApplyCapacityToUpcoming(e.target.checked)}
+                              className="h-4 w-4 accent-[#C86D2D]"
+                            />
+                            <span>Применить эту вместимость ко всем будущим групповым занятиям</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-[#F3F4F6] pt-4">
+                        <div className="text-sm font-semibold text-[#111827]">
                           Карточки на главной странице
                         </div>
                         <p className="mt-0.5 text-xs text-[#6B7280]">
@@ -2892,7 +3169,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                               disabled={!showHeroAge}
                               value={heroAgeText}
                               onChange={(e) => setHeroAgeText(e.target.value)}
-                              placeholder="6–14 лет"
+                              placeholder="От 6 лет"
                               className="min-h-[38px] w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF] sm:w-44"
                             />
                           </div>
@@ -2936,7 +3213,7 @@ export const MasterPanelPage: React.FC<MasterPanelPageProps> = ({ onNavigate }) 
                               disabled={!showHeroGroups}
                               value={heroGroupsText}
                               onChange={(e) => setHeroGroupsText(e.target.value)}
-                              placeholder="2–4 места"
+                              placeholder="до 4 мест"
                               className="min-h-[38px] w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF] sm:w-44"
                             />
                           </div>

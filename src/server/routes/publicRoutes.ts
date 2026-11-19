@@ -59,7 +59,7 @@ publicRouter.get('/schedule', (_req, res, next) => {
 
     const tariffs = db
       .prepare(
-        'SELECT id, title, lessons_count, price, validity_days FROM tariffs WHERE is_active = 1 ORDER BY lessons_count ASC'
+        'SELECT id, title, lessons_count, price, validity_days FROM tariffs WHERE is_active = 1 ORDER BY lessons_count ASC, price ASC'
       )
       .all();
 
@@ -67,7 +67,7 @@ publicRouter.get('/schedule', (_req, res, next) => {
       .prepare(
         `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
                 show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
-                show_hero_groups, hero_groups_text, show_hero_free_cancel
+                show_hero_groups, hero_groups_text, show_hero_free_cancel, default_group_capacity
          FROM workshop_settings WHERE id = 1`
       )
       .get();
@@ -121,36 +121,64 @@ publicRouter.post('/register', registerLimiter, (req, res, next) => {
     if (req.body?.personal_data_consent !== true) {
       throw new HttpError(400, 'Необходимо дать согласие на обработку персональных данных');
     }
-    const fullName = sanitizePlainText(req.body?.full_name ?? req.body?.parent_name, 120) || 'Новый ученик';
-    const childName = sanitizePlainText(req.body?.child_name, 80) || fullName;
+
+    const rawChildren = Array.isArray(req.body?.children) ? req.body.children : [];
+    const normalizedChildren: Array<{ name: string; age: number }> = [];
+
+    for (const item of rawChildren.slice(0, 10)) {
+      if (!item || typeof item !== 'object') continue;
+      const name = sanitizePlainText((item as { name?: unknown }).name, 80);
+      const rawChildAge = Number((item as { age?: unknown }).age ?? 10);
+      const age = Number.isInteger(rawChildAge) && rawChildAge >= 3 && rawChildAge <= 99 ? rawChildAge : 10;
+      if (name) {
+        normalizedChildren.push({ name, age });
+      }
+    }
+
+    const parentNameInput = sanitizePlainText(
+      req.body?.parent_name ?? req.body?.full_name,
+      120
+    );
+    const singleChildName = sanitizePlainText(req.body?.child_name, 80);
+    const rawAge = req.body?.age !== undefined && req.body?.age !== '' ? Number(req.body.age) : 10;
+    const singleAge = Number.isInteger(rawAge) && rawAge >= 3 && rawAge <= 99 ? rawAge : 10;
+
+    if (normalizedChildren.length === 0) {
+      const fallbackChildName = singleChildName || parentNameInput || 'Новый ученик';
+      normalizedChildren.push({ name: fallbackChildName, age: singleAge });
+    }
+
+    const parentName =
+      parentNameInput ||
+      normalizedChildren[0]?.name ||
+      'Новый ученик';
+
     const phone = sanitizePlainText(req.body?.phone, 30) || 'Не указан';
     const email = sanitizePlainText(req.body?.email, 120);
     const maxContact = sanitizePlainText(req.body?.max_contact, 120);
-    const rawAge = req.body?.age !== undefined && req.body?.age !== '' ? Number(req.body.age) : 10;
-    const age = Number.isInteger(rawAge) && rawAge >= 3 && rawAge <= 99 ? rawAge : 10;
 
     const created = runInTransaction((db) => {
       const token = generateAccessToken();
       const nowIso = new Date().toISOString();
       const famRes = db
         .prepare(
-          `INSERT INTO families (parent_name, phone, email, max_contact, access_token, money_balance, created_at)
-           VALUES (?, ?, ?, ?, ?, 0, ?)`
+          `INSERT INTO families (parent_name, phone, email, max_contact, access_token, money_balance, consented_at, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
         )
-        .run(fullName, phone, email, maxContact, token, nowIso);
+        .run(parentName, phone, email, maxContact, token, nowIso, nowIso);
       const familyId = Number(famRes.lastInsertRowid);
 
-      db.prepare('INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)').run(
-        familyId,
-        childName,
-        age,
-        null
+      const insertChildStmt = db.prepare(
+        'INSERT INTO children (family_id, name, age, notes) VALUES (?, ?, ?, ?)'
       );
+      for (const child of normalizedChildren) {
+        insertChildStmt.run(familyId, child.name, child.age, null);
+      }
 
       createNotification(
         familyId,
         'Личный кабинет ученика создан',
-        'Добро пожаловать в мастерскую «Ясна»! Сохраните вашу персональную ссылку для входа и заполните анкету ученика (ФИО, телефон, почта, MAX и возраст) в разделе «Профиль ученика».',
+        'Добро пожаловать в мастерскую «Ясна»! Сохраните вашу персональную ссылку для входа — по ней вы всегда сможете записаться на занятия и управлять анкетой.',
         db
       );
 

@@ -35,6 +35,7 @@ interface ScheduleCalendarViewProps {
   onConvertWaitlist: (waitlistId: number) => Promise<void>;
   onEditLesson: (lesson: MasterLesson) => void;
   onCancelLesson: (lessonId: number) => Promise<void>;
+  onCancelDate?: (dateKey: string) => Promise<void>;
   onCreateLessonOnDate: (dateKey: string) => void;
   onSelectStudent?: (familyId: number, childId?: number) => void;
 }
@@ -124,6 +125,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   onConvertWaitlist,
   onEditLesson,
   onCancelLesson,
+  onCancelDate,
   onCreateLessonOnDate,
   onSelectStudent,
 }) => {
@@ -145,6 +147,8 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
   const [busyBookingId, setBusyBookingId] = useState<number | null>(null);
   const [enrollingChildId, setEnrollingChildId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  const [confirmCancelDate, setConfirmCancelDate] = useState(false);
+  const [cancelingDate, setCancelingDate] = useState(false);
 
   const dayDrilldownRef = useRef<HTMLDivElement | null>(null);
 
@@ -293,6 +297,10 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
     setConfirmCancelId(null);
     setUnenrolledSearch('');
   }, [selectedLessonId]);
+
+  useEffect(() => {
+    setConfirmCancelDate(false);
+  }, [selectedDateKey]);
 
   const allChildren = useMemo(() => {
     const items: Array<{
@@ -792,14 +800,54 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => onCreateLessonOnDate(selectedDateKey)}
-              className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-semibold text-[#111827] hover:border-[#C86D2D] hover:bg-[#FDF4ED] hover:text-[#C86D2D]"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-              Добавить
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {onCancelDate && dayLessons.some((l) => l.is_canceled === 0) && (
+                confirmCancelDate ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={cancelingDate}
+                      onClick={async () => {
+                        setCancelingDate(true);
+                        try {
+                          await onCancelDate(selectedDateKey);
+                          setConfirmCancelDate(false);
+                        } finally {
+                          setCancelingDate(false);
+                        }
+                      }}
+                      className="min-h-[38px] cursor-pointer rounded-xl bg-[#991B1B] px-3 text-xs font-medium text-white disabled:opacity-60"
+                    >
+                      {cancelingDate ? 'Отмена...' : 'Отменить весь день'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmCancelDate(false)}
+                      className="min-h-[38px] cursor-pointer rounded-xl border border-[#E5E7EB] px-2.5 text-xs text-[#6B7280]"
+                    >
+                      Нет
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmCancelDate(true)}
+                    className="min-h-[38px] cursor-pointer rounded-xl border border-[#FECACA] bg-white px-3 text-xs font-medium text-[#991B1B] hover:bg-[#FEF2F2]"
+                  >
+                    Отменить дату
+                  </button>
+                )
+              )}
+
+              <button
+                type="button"
+                onClick={() => onCreateLessonOnDate(selectedDateKey)}
+                className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-semibold text-[#111827] hover:border-[#C86D2D] hover:bg-[#FDF4ED] hover:text-[#C86D2D]"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                Добавить
+              </button>
+            </div>
           </div>
 
           {dayLessons.length === 0 ? (

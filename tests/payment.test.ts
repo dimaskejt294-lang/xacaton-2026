@@ -56,7 +56,7 @@ describe('YooKassa payment creation, verification, idempotency & exports', () =>
             id: externalId,
             status: 'pending',
             paid: false,
-            amount: { value: '4200.00', currency: 'RUB' },
+            amount: { value: tariff4.price.toFixed(2), currency: 'RUB' },
             confirmation: {
               type: 'redirect',
               confirmation_url: `https://yoomoney.ru/checkout/payments/v2/contract?orderId=${externalId}`,
@@ -71,7 +71,7 @@ describe('YooKassa payment creation, verification, idempotency & exports', () =>
             id: externalId,
             status: 'succeeded',
             paid: true,
-            amount: { value: '4200.00', currency: 'RUB' },
+            amount: { value: tariff4.price.toFixed(2), currency: 'RUB' },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );

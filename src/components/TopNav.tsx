@@ -31,19 +31,19 @@ export const TopNav: React.FC<TopNavProps> = ({
 
   return (
     <header className="sticky top-0 z-30 border-b border-[#E5E7EB] bg-white/95 backdrop-blur-sm">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-2.5 sm:px-6">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2 sm:gap-6 sm:px-6 sm:py-2.5">
         {/* Zone 1: Brand Wordmark */}
         <button
           type="button"
           onClick={() => handleLink('/schedule')}
-          className="flex shrink-0 cursor-pointer items-center gap-2.5 whitespace-nowrap text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C86D2D]"
+          className="flex min-w-0 cursor-pointer items-center gap-2 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C86D2D] sm:gap-2.5"
         >
-          <BrandLogo variant="theme" className="h-10 w-10 rounded-full" />
-          <div className="flex flex-col leading-tight">
+          <BrandLogo variant="theme" className="h-9 w-9 shrink-0 rounded-full sm:h-10 sm:w-10" />
+          <div className="flex min-w-0 flex-col leading-tight">
             <span className="font-display text-base font-bold tracking-tight text-[#111827]">
               Ясна
             </span>
-            <span className="text-[11px] font-medium text-[#6B7280]">
+            <span className="truncate text-[10px] font-medium text-[#6B7280] sm:text-[11px]">
               школа труда · Сургут
             </span>
           </div>
@@ -108,7 +108,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         </nav>
 
         {/* Zone 3: Primary Action */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           <PWAInstallButton variant="nav" familyToken={savedFamilyToken} />
 
           <button
@@ -135,7 +135,7 @@ export const TopNav: React.FC<TopNavProps> = ({
             type="button"
             aria-label="Открыть меню"
             onClick={() => setMobileOpen((prev) => !prev)}
-            className="inline-flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#111827] md:hidden"
+            className="inline-flex min-h-[40px] min-w-[40px] shrink-0 cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#111827] md:hidden"
           >
             {mobileOpen ? <X className="h-5 w-5" strokeWidth={1.5} /> : <Menu className="h-5 w-5" strokeWidth={1.5} />}
           </button>

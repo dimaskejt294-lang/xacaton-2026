@@ -6,6 +6,7 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   CreditCard,
   Download,
@@ -15,17 +16,19 @@ import {
   History,
   Lock,
   MessageSquare,
+  Plus,
   RefreshCw,
   ShieldCheck,
   Smartphone,
   Star,
+  Trash2,
   User,
   Wallet,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { LegalDocumentItem, ParentDashboardData } from '../types.ts';
+import type { LegalDocKey, LegalDocumentItem, ParentDashboardData } from '../types.ts';
 import {
   bookingStatusClasses,
   bookingStatusLabel,
@@ -43,6 +46,12 @@ import {
   getDevicePushStatus,
   subscribeFamilyPush,
 } from '../utils/pushClient.ts';
+import {
+  formatLongDateRu,
+  formatShortDateRu,
+  groupWeekendSlots,
+} from '../utils/scheduleGroups.ts';
+import { LegalDocumentModal } from './LegalDocumentModal.tsx';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 function isSafeHttpUrl(rawUrl: string | null | undefined): boolean {
@@ -106,14 +115,18 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
 
   // Student profile editor state
   const [showProfileEditor, setShowProfileEditor] = useState(false);
-  const [profileFullName, setProfileFullName] = useState('');
+  const [profileChildren, setProfileChildren] = useState<
+    Array<{ id?: number; name: string; age: number }>
+  >([]);
+  const [profileParentName, setProfileParentName] = useState('');
   const [profilePhone, setProfilePhone] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
   const [profileMax, setProfileMax] = useState('');
-  const [profileAge, setProfileAge] = useState(10);
   const [profilePersonalDataConsent, setProfilePersonalDataConsent] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
   const [copiedMyLink, setCopiedMyLink] = useState(false);
+  const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
+  const [mobileGroupDay, setMobileGroupDay] = useState<'all' | 'sat' | 'sun'>('all');
 
   const allConsentsChecked = acceptedOffer && acceptedPersonalData && acceptedPrivacy;
 
@@ -150,17 +163,20 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       const json = (await res.json()) as ParentDashboardData;
       setData(json);
       onTokenValid(token);
-      const firstChild = json.children[0];
-      setProfileFullName(firstChild?.name || json.family.parent_name || '');
+      setProfileChildren(
+        json.children.length > 0
+          ? json.children.map((c) => ({ id: c.id, name: c.name, age: c.age }))
+          : [{ name: json.family.parent_name || '', age: 10 }]
+      );
+      setProfileParentName(
+        json.family.parent_name === 'Новый ученик' ? '' : json.family.parent_name || ''
+      );
       setProfilePhone(json.family.phone === 'Не указан' ? '' : json.family.phone || '');
       setProfileEmail(json.family.email || '');
       setProfileMax(json.family.max_contact || '');
-      setProfileAge(firstChild?.age ?? 10);
       if (
         json.family.parent_name === 'Новый ученик' ||
-        json.family.phone === 'Не указан' ||
-        !json.family.email ||
-        !json.family.max_contact
+        json.family.phone === 'Не указан'
       ) {
         setShowProfileEditor(true);
         setProfilePersonalDataConsent(false);
@@ -616,6 +632,33 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
     }
   };
 
+  const handleAddProfileChild = () => {
+    if (profileChildren.length >= 10) return;
+    setProfileChildren((prev) => [...prev, { name: '', age: 10 }]);
+  };
+
+  const handleUpdateProfileChild = (
+    idx: number,
+    patch: Partial<{ name: string; age: number }>
+  ) => {
+    setProfileChildren((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, ...patch } : item))
+    );
+  };
+
+  const handleRemoveUnsavedChild = (idx: number) => {
+    setProfileChildren((prev) => prev.filter((item, i) => i !== idx || Boolean(item.id)));
+  };
+
+  const openLegalDocByKey = (key: LegalDocKey) => {
+    const doc = data?.legal_documents?.find((d) => d.doc_key === key);
+    if (doc) {
+      setPreviewLegalDoc(doc);
+      return;
+    }
+    window.open(`/api/public/legal/${encodeURIComponent(key)}/file?inline=1`, '_blank', 'noopener');
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setBanner(null);
@@ -626,19 +669,27 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       });
       return;
     }
+    const cleanChildren = profileChildren
+      .map((c) => ({ id: c.id, name: c.name.trim(), age: Number(c.age) || 10 }))
+      .filter((c) => c.name.length > 0);
+    if (cleanChildren.length === 0) {
+      setBanner({
+        type: 'error',
+        text: 'Укажите имя и фамилию хотя бы одного ребёнка (ученика)',
+      });
+      return;
+    }
     setSavingProfile(true);
     try {
       const res = await fetch(`/api/lk/${encodeURIComponent(token)}/profile`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          full_name: profileFullName.trim(),
-          child_name: profileFullName.trim(),
+          parent_name: profileParentName.trim() || cleanChildren[0].name,
+          children: cleanChildren,
           phone: profilePhone.trim(),
           email: profileEmail.trim(),
           max_contact: profileMax.trim(),
-          age: Number(profileAge) || 10,
-          child_id: activeChild?.id ?? data?.children[0]?.id,
         }),
       });
       const body = (await res.json()) as { error?: string };
@@ -648,13 +699,13 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       }
       setBanner({
         type: 'success',
-        text: 'Анкета ученика (ФИО, телефон, почта, MAX и возраст) успешно сохранена!',
+        text: 'Анкета семьи и учеников успешно сохранена!',
       });
       setShowProfileEditor(false);
       await loadCabinet();
     } catch (err) {
       console.warn('[ParentCabinetPage] Ошибка сохранения профиля:', err);
-      setBanner({ type: 'error', text: 'Ошибка сети при сохранении анкеты ученика' });
+      setBanner({ type: 'error', text: 'Ошибка сети при сохранении анкеты' });
     } finally {
       setSavingProfile(false);
     }
@@ -711,11 +762,11 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
   const personalUrl = `${window.location.origin}/lk/${token}`;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-5xl overflow-x-clip px-3 py-4 sm:px-6 sm:py-8">
       {/* Header row */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div>
-          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#6B7280]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-medium text-[#6B7280]">
             <span>Личный кабинет ученика</span>
             <span aria-hidden="true">·</span>
             <span>{data.family.phone}</span>
@@ -732,18 +783,18 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
               </>
             )}
           </div>
-          <h1 className="mt-0.5 font-display text-2xl font-bold tracking-tight text-[#111827]">
+          <h1 className="mt-0.5 font-display text-xl font-bold tracking-tight text-[#111827] sm:text-2xl">
             {data.family.parent_name}
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={() => setShowProfileEditor((prev) => !prev)}
-            className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-[#C86D2D] bg-[#FDF4ED] px-4 py-2 text-sm font-semibold text-[#C86D2D] transition-colors hover:bg-[#FCE8D8]"
+            className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#C86D2D] bg-[#FDF4ED] px-3 py-1.5 text-xs font-semibold text-[#C86D2D] transition-colors hover:bg-[#FCE8D8] sm:min-h-[44px] sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
           >
-            <User className="h-4 w-4" strokeWidth={1.75} />
+            <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={1.75} />
             <span>{showProfileEditor ? 'Скрыть анкету' : 'Анкета ученика'}</span>
           </button>
 
@@ -762,9 +813,9 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
               type="button"
               disabled={pushBusy}
               onClick={() => void handleEnablePush()}
-              className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-[#C86D2D] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#B05B20] disabled:opacity-60"
+              className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-[#B05B20] disabled:opacity-60 sm:min-h-[44px] sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
             >
-              <BellRing className="h-4 w-4" strokeWidth={1.75} />
+              <BellRing className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={1.75} />
               <span>{pushBusy ? 'Подключение...' : 'Уведомления на телефон'}</span>
             </button>
           )}
@@ -772,12 +823,12 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('notifications')}
-            className="relative inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#F9FAFB]"
+            className="relative inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 py-1.5 text-xs font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#F9FAFB] sm:min-h-[44px] sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
           >
-            <Bell className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
+            <Bell className="h-3.5 w-3.5 text-[#C86D2D] sm:h-4 sm:w-4" strokeWidth={1.5} />
             <span>Уведомления</span>
             {data.unread_notifications_count > 0 && (
-              <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#C86D2D] px-1.5 text-xs font-semibold text-white tabular-nums">
+              <span className="inline-flex h-4 min-w-[18px] items-center justify-center rounded-full bg-[#C86D2D] px-1 text-[11px] font-semibold text-white tabular-nums sm:h-5 sm:min-w-[20px] sm:px-1.5 sm:text-xs">
                 {data.unread_notifications_count}
               </span>
             )}
@@ -785,51 +836,122 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
         </div>
       </div>
 
-      {/* Personal login link bar */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#E5E7EB] bg-white px-4 py-3 text-xs shadow-2xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-[#111827]">Ваша ссылка для входа в ЛК:</span>
-          <code className="rounded-lg bg-[#F9FAFB] px-2.5 py-1 font-mono text-[#374151]">
+      {/* Personal login link bar (overflow-safe on Android/iOS) */}
+      <div className="mt-4 flex flex-col gap-2.5 overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white px-4 py-3 text-xs shadow-2xs sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1 sm:flex sm:items-center sm:gap-2 sm:space-y-0">
+          <span className="shrink-0 font-semibold text-[#111827]">
+            Ваша ссылка для входа в ЛК:
+          </span>
+          <code className="block min-w-0 max-w-full break-all rounded-lg bg-[#F9FAFB] px-2.5 py-1.5 font-mono text-[11px] text-[#374151] sm:text-xs">
             {personalUrl}
           </code>
         </div>
         <button
           type="button"
           onClick={() => void handleCopyPersonalLink()}
-          className="min-h-[34px] cursor-pointer rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-3 font-semibold text-[#111827] hover:bg-[#F3F4F6]"
+          className="min-h-[38px] w-full shrink-0 cursor-pointer rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-3 font-semibold text-[#111827] hover:bg-[#F3F4F6] sm:w-auto"
         >
           {copiedMyLink ? 'Ссылка скопирована!' : 'Скопировать ссылку'}
         </button>
       </div>
 
-      {/* Student Profile Form (ФИО, номер телефона, почта, MAX, возраст) */}
+      {/* Student & Parent Profile Form (Children first, Parent below, + Добавить ребёнка) */}
       {showProfileEditor && (
         <form
           onSubmit={handleSaveProfile}
           className="mt-4 rounded-2xl border border-[#C86D2D]/30 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-display text-base font-bold text-[#111827]">
-                Анкета ученика (личные данные для мастера)
-              </h2>
-              <p className="mt-0.5 text-xs text-[#6B7280]">
-                Заполните ФИО, номер телефона, электронную почту, контакт в мессенджере MAX и возраст ученика.
-              </p>
-            </div>
+          <div>
+            <h2 className="font-display text-base font-bold text-[#111827]">
+              Анкета ученика и контакты родителя
+            </h2>
+            <p className="mt-0.5 text-xs text-[#6B7280]">
+              Сначала укажите имя, фамилию и возраст ребёнка (можно добавить нескольких детей), а
+              ниже — контакты родителя.
+            </p>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="lg:col-span-2">
+          {/* Children list FIRST */}
+          <div className="mt-4 space-y-2.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-[#111827]">Ученики (дети)</span>
+              {profileChildren.length < 10 && (
+                <button
+                  type="button"
+                  onClick={handleAddProfileChild}
+                  className="inline-flex cursor-pointer items-center gap-1 text-xs font-semibold text-[#C86D2D] hover:text-[#B05B20]"
+                >
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                  Добавить ребёнка
+                </button>
+              )}
+            </div>
+
+            {profileChildren.map((child, idx) => (
+              <div
+                key={child.id ?? `new-${idx}`}
+                className="flex flex-col gap-2 sm:flex-row sm:items-end"
+              >
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-[#6B7280]">
+                    {profileChildren.length > 1
+                      ? `Имя и фамилия ребёнка ${idx + 1} *`
+                      : 'Имя и фамилия ребёнка *'}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={child.name}
+                    onChange={(e) => handleUpdateProfileChild(idx, { name: e.target.value })}
+                    placeholder="Потапов Артём"
+                    className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-end gap-2">
+                  <div className="w-28">
+                    <label className="block text-xs font-medium text-[#6B7280]">
+                      Возраст *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={3}
+                      max={99}
+                      value={child.age}
+                      onChange={(e) =>
+                        handleUpdateProfileChild(idx, { age: Number(e.target.value) })
+                      }
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm text-[#111827] tabular-nums focus:border-[#C86D2D] focus:outline-none"
+                    />
+                  </div>
+                  {!child.id && profileChildren.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveUnsavedChild(idx)}
+                      aria-label="Удалить строку ребёнка"
+                      className="inline-flex min-h-[42px] min-w-[42px] cursor-pointer items-center justify-center rounded-xl border border-[#FECACA] bg-white text-[#991B1B] hover:bg-[#FEF2F2]"
+                    >
+                      <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Parent details BELOW */}
+          <div className="mt-3.5 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
               <label className="block text-xs font-medium text-[#6B7280]">
-                ФИО ученика (или родителя) *
+                Имя и фамилия родителя *
               </label>
               <input
                 type="text"
                 required
-                value={profileFullName}
-                onChange={(e) => setProfileFullName(e.target.value)}
-                placeholder="Иванов Иван Иванович"
+                value={profileParentName}
+                onChange={(e) => setProfileParentName(e.target.value)}
+                placeholder="Потапова Мария"
                 className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
               />
             </div>
@@ -856,7 +978,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                 type="email"
                 value={profileEmail}
                 onChange={(e) => setProfileEmail(e.target.value)}
-                placeholder="student@mail.ru"
+                placeholder="parent@mail.ru"
                 className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] focus:border-[#C86D2D] focus:bg-white focus:outline-none"
               />
             </div>
@@ -875,87 +997,40 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
             </div>
           </div>
 
-          <div className="mt-3.5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-            <div className="flex flex-wrap items-end gap-3.5">
-              <div className="w-36">
-                <label className="block text-xs font-medium text-[#6B7280]">
-                  Возраст (лет) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  min={3}
-                  max={99}
-                  value={profileAge}
-                  onChange={(e) => setProfileAge(Number(e.target.value))}
-                  className="mt-1 min-h-[42px] w-full rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-sm text-[#111827] tabular-nums focus:border-[#C86D2D] focus:bg-white focus:outline-none"
-                />
-              </div>
-
-              {(() => {
-                const pdDoc = data.legal_documents?.find((d) => d.doc_key === 'personal_data');
-                const privDoc = data.legal_documents?.find((d) => d.doc_key === 'privacy');
-                return (
-                  <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-2.5 text-xs text-[#374151] transition-colors hover:border-[#C86D2D]/50">
-                    <input
-                      type="checkbox"
-                      required
-                      checked={profilePersonalDataConsent}
-                      onChange={(e) => setProfilePersonalDataConsent(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#D1D5DB] text-[#C86D2D] focus:ring-[#C86D2D]"
-                    />
-                    <span className="leading-relaxed">
-                      Даю согласие с документом{' '}
-                      {pdDoc ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setPreviewLegalDoc(pdDoc);
-                          }}
-                          className="cursor-pointer font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
-                        >
-                          «{pdDoc.title}»
-                        </button>
-                      ) : (
-                        <a
-                          href="/api/public/legal/personal_data/file?inline=1"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
-                        >
-                          «Согласие на обработку персональных данных»
-                        </a>
-                      )}{' '}
-                      и{' '}
-                      {privDoc ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setPreviewLegalDoc(privDoc);
-                          }}
-                          className="cursor-pointer font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
-                        >
-                          «{privDoc.title}»
-                        </button>
-                      ) : (
-                        <a
-                          href="/api/public/legal/privacy/file?inline=1"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
-                        >
-                          «Политика конфиденциальности»
-                        </a>
-                      )}
-                    </span>
-                  </label>
-                );
-              })()}
-            </div>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3.5 py-2.5 text-xs text-[#374151] transition-colors hover:border-[#C86D2D]/50">
+              <input
+                type="checkbox"
+                required
+                checked={profilePersonalDataConsent}
+                onChange={(e) => setProfilePersonalDataConsent(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#D1D5DB] text-[#C86D2D] focus:ring-[#C86D2D]"
+              />
+              <span className="leading-relaxed">
+                Даю{' '}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openLegalDocByKey('personal_data');
+                  }}
+                  className="cursor-pointer font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
+                >
+                  Согласие на обработку персональных данных
+                </button>{' '}
+                и ознакомлен(а) с{' '}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openLegalDocByKey('privacy');
+                  }}
+                  className="cursor-pointer font-semibold text-[#C86D2D] underline underline-offset-2 hover:text-[#B05B20]"
+                >
+                  Политикой конфиденциальности
+                </button>
+              </span>
+            </label>
 
             <div className="flex items-center gap-2">
               <button
@@ -1010,20 +1085,20 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       </AnimatePresence>
 
       {/* Two Distinct Summary Cards: Remaining Lessons vs Money Balance */}
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:mt-6 sm:grid-cols-2 sm:gap-4">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2 }}
-          className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_8px_22px_-16px_rgba(17,24,39,0.08)]"
+          className="min-w-0 rounded-2xl border border-[#E5E7EB] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_8px_22px_-16px_rgba(17,24,39,0.08)] sm:p-5"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-medium text-[#6B7280]">Остаток занятий</span>
-            <Calendar className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
+            <Calendar className="h-4 w-4 shrink-0 text-[#C86D2D]" strokeWidth={1.5} />
           </div>
 
-          <div className="mt-2 flex items-baseline gap-3">
-            <span className="font-display text-4xl font-bold tracking-tight text-[#111827] tabular-nums">
+          <div className="mt-1.5 flex items-baseline gap-2.5 sm:mt-2 sm:gap-3">
+            <span className="font-display text-3xl font-bold tracking-tight text-[#111827] tabular-nums sm:text-4xl">
               {data.total_remaining_lessons}
             </span>
             <span className="text-sm text-[#6B7280]">
@@ -1031,7 +1106,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
             </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F3F4F6] pt-3 text-xs">
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-[#F3F4F6] pt-2.5 text-xs sm:mt-3 sm:pt-3">
             {data.subscriptions.length > 0 ? (
               <div className="space-y-1 text-[#6B7280] tabular-nums">
                 {data.subscriptions.map((sub) => (
@@ -1061,18 +1136,18 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, delay: 0.04 }}
-          className="rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_8px_22px_-16px_rgba(17,24,39,0.08)]"
+          className="min-w-0 rounded-2xl border border-[#E5E7EB] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_8px_22px_-16px_rgba(17,24,39,0.08)] sm:p-5"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-medium text-[#6B7280]">
               Денежный баланс / Задолженность
             </span>
-            <Wallet className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
+            <Wallet className="h-4 w-4 shrink-0 text-[#C86D2D]" strokeWidth={1.5} />
           </div>
 
-          <div className="mt-2 flex items-baseline gap-3">
+          <div className="mt-1.5 flex items-baseline gap-2 sm:mt-2 sm:gap-3">
             <span
-              className={`font-display text-4xl font-bold tracking-tight tabular-nums ${
+              className={`font-display text-3xl font-bold tracking-tight tabular-nums sm:text-4xl ${
                 balanceNegative
                   ? 'text-[#991B1B]'
                   : balancePositive
@@ -1084,7 +1159,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
             </span>
           </div>
 
-          <div className="mt-3 flex items-center justify-between border-t border-[#F3F4F6] pt-3 text-xs">
+          <div className="mt-2.5 flex items-center justify-between border-t border-[#F3F4F6] pt-2.5 text-xs sm:mt-3 sm:pt-3">
             <span
               className={`inline-flex items-center rounded-lg px-2 py-0.5 font-semibold ${
                 balanceNegative
@@ -1105,22 +1180,22 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       </div>
 
       {/* Children Switcher */}
-      <div className="mt-6 flex flex-wrap items-center gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-1.5 sm:mt-6 sm:gap-2">
         <span className="mr-1 text-xs font-medium text-[#6B7280]">Ребёнок:</span>
         {data.children.map((child) => (
           <button
             key={child.id}
             type="button"
             onClick={() => setSelectedChildId(child.id)}
-            className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border px-3.5 text-sm font-medium transition-all duration-150 ${
+            className={`inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition-all duration-150 sm:min-h-[44px] sm:gap-2 sm:px-3.5 sm:text-sm ${
               selectedChildId === child.id
                 ? 'border-[#C86D2D] bg-[#FDF4ED] text-[#111827] shadow-sm'
                 : 'border-[#E5E7EB] bg-white text-[#6B7280] hover:text-[#111827]'
             }`}
           >
-            <User className="h-4 w-4 text-[#C86D2D]" strokeWidth={1.5} />
+            <User className="h-3.5 w-3.5 text-[#C86D2D] sm:h-4 sm:w-4" strokeWidth={1.5} />
             <span>{child.name}</span>
-            <span className="text-xs text-[#6B7280] tabular-nums">
+            <span className="text-[11px] text-[#6B7280] tabular-nums sm:text-xs">
               {pluralizeYears(child.age)}
             </span>
           </button>
@@ -1130,7 +1205,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
           <button
             type="button"
             onClick={() => setSelectedChildId('all')}
-            className={`min-h-[44px] cursor-pointer rounded-xl border px-3.5 text-sm font-medium transition-colors ${
+            className={`min-h-[38px] cursor-pointer rounded-xl border px-3 text-xs font-medium transition-colors sm:min-h-[44px] sm:px-3.5 sm:text-sm ${
               selectedChildId === 'all'
                 ? 'border-[#C86D2D] bg-[#FDF4ED] text-[#111827]'
                 : 'border-[#E5E7EB] bg-white text-[#6B7280] hover:text-[#111827]'
@@ -1142,7 +1217,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       </div>
 
       {/* Navigation Tabs */}
-      <div className="mt-6 flex gap-1.5 overflow-x-auto rounded-2xl border border-[#E5E7EB] bg-white p-1.5">
+      <div className="mt-4 flex gap-1 overflow-x-auto rounded-2xl border border-[#E5E7EB] bg-white p-1 sm:mt-6 sm:gap-1.5 sm:p-1.5">
         {(
           [
             { id: 'schedule', label: 'Записаться', icon: Calendar },
@@ -1171,13 +1246,13 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex min-h-[44px] shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-4 text-sm font-medium transition-all duration-150 ${
+              className={`inline-flex min-h-[38px] shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl px-3 text-xs font-medium transition-all duration-150 sm:min-h-[44px] sm:gap-2 sm:px-4 sm:text-sm ${
                 isActive
                   ? 'bg-[#C86D2D] text-white shadow-sm'
                   : 'text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#111827]'
               }`}
             >
-              <Icon className="h-4 w-4" strokeWidth={1.5} />
+              <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={1.5} />
               <span>{tab.label}</span>
             </button>
           );
@@ -1185,7 +1260,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
       </div>
 
       {/* Tab Content */}
-      <div className="mt-6">
+      <div className="mt-4 sm:mt-6">
         <AnimatePresence mode="wait">
           {activeTab === 'schedule' && (
             <motion.div
@@ -1224,112 +1299,403 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                   Предстоящих занятий в расписании пока нет.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {data.schedule.map((lesson) => {
-                    const alreadyBooked =
-                      activeChildIdForAction !== null &&
-                      data.bookings.some(
-                        (b) =>
-                          b.lesson_id === lesson.id &&
-                          b.child_id === activeChildIdForAction &&
-                          b.status === 'booked'
-                      );
-                    const alreadyWaiting =
-                      activeChildIdForAction !== null &&
-                      data.waitlist.some(
-                        (w) =>
-                          w.lesson_id === lesson.id && w.child_id === activeChildIdForAction
-                      );
-                    const isFull = lesson.free_spots === 0;
-
+                <div className="space-y-6">
+                  {/* 6 Permanent Weekend Group Cards */}
+                  {(() => {
+                    const groups = groupWeekendSlots(data.schedule);
+                    if (groups.length === 0) return null;
                     return (
-                      <div
-                        key={lesson.id}
-                        className="flex flex-col justify-between rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-medium text-[#6B7280] tabular-nums">
-                              {lessonTypeLabel(lesson.lesson_type)} · {lesson.duration_minutes} мин
-                            </span>
-                            <span
-                              className={`rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums ${
-                                isFull
-                                  ? 'bg-[#FEF2F2] text-[#991B1B]'
-                                  : lesson.free_spots === 1
-                                  ? 'bg-[#FFFBEB] text-[#92400E]'
-                                  : 'bg-[#ECFDF5] text-[#065F46]'
-                              }`}
-                            >
-                              {isFull
-                                ? 'Мест нет'
-                                : `Мест: ${lesson.free_spots} из ${lesson.capacity}`}
-                            </span>
-                          </div>
-
-                          <h3 className="mt-2.5 font-display text-lg font-semibold text-[#111827]">
-                            {lesson.title}
+                      <div>
+                        <div className="mb-2.5 sm:mb-3">
+                          <h3 className="font-display text-base font-bold text-[#111827]">
+                            Групповые занятия
                           </h3>
-                          {lesson.description && (
-                            <p className="mt-1 text-sm text-[#6B7280]">{lesson.description}</p>
-                          )}
+                          <p className="text-xs text-[#6B7280]">
+                            Выберите удобное время: на ближайшее или конкретную дату.
+                          </p>
                         </div>
 
-                        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#F3F4F6] pt-4">
-                          <div>
-                            <div className="text-sm font-semibold text-[#111827] tabular-nums">
-                              {formatDateTimeRu(lesson.start_time)}
-                            </div>
-                            <div className="text-xs text-[#6B7280] tabular-nums">
-                              {formatMoney(lesson.single_price)} или 1 зан. с абонемента
-                            </div>
-                          </div>
-
-                          {alreadyBooked ? (
-                            <span className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#ECFDF5] px-4 text-sm font-semibold text-[#065F46]">
-                              <Check className="h-4 w-4" strokeWidth={1.5} />
-                              Записан(а)
-                            </span>
-                          ) : alreadyWaiting ? (
-                            <span className="inline-flex min-h-[44px] items-center rounded-xl bg-[#FFFBEB] px-4 text-sm font-medium text-[#92400E]">
-                              В листе ожидания
-                            </span>
-                          ) : isFull ? (
+                        {/* Mobile weekday filter (Все / Суббота / Воскресенье) */}
+                        <div className="mb-2.5 flex gap-1.5 sm:hidden">
+                          {(
+                            [
+                              { id: 'all', label: `Все (${groups.length})` },
+                              { id: 'sat', label: 'Суббота' },
+                              { id: 'sun', label: 'Воскресенье' },
+                            ] as const
+                          ).map((d) => (
                             <button
+                              key={d.id}
                               type="button"
-                              disabled={busyKey === `wait-${lesson.id}`}
-                              onClick={() => void handleJoinWaitlist(lesson.id)}
-                              className="min-h-[44px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-sm font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] disabled:opacity-60"
+                              onClick={() => setMobileGroupDay(d.id)}
+                              className={`min-h-[34px] flex-1 cursor-pointer rounded-xl border px-2 text-xs font-semibold transition-colors ${
+                                mobileGroupDay === d.id
+                                  ? 'border-[#C86D2D] bg-[#FDF4ED] text-[#C86D2D]'
+                                  : 'border-[#E5E7EB] bg-white text-[#6B7280]'
+                              }`}
                             >
-                              {busyKey === `wait-${lesson.id}`
-                                ? 'Добавление...'
-                                : 'Встать в лист ожидания'}
+                              {d.label}
                             </button>
-                          ) : (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                disabled={busyKey === `book-${lesson.id}`}
-                                onClick={() =>
-                                  void handleBookLesson(
-                                    lesson.id,
-                                    data.total_remaining_lessons === 0
-                                  )
-                                }
-                                className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-[#B05B20] active:scale-[0.98] disabled:opacity-60"
+                          ))}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2.5 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
+                          {groups
+                            .filter((g) => {
+                              if (mobileGroupDay === 'sat') return g.dow === 6;
+                              if (mobileGroupDay === 'sun') return g.dow === 0;
+                              return true;
+                            })
+                            .map((group) => {
+                            const targetLesson = group.nearestOpen ?? group.nearestLesson;
+                            const isFull = targetLesson.free_spots === 0;
+                            const isExpanded = expandedGroupKey === group.key;
+
+                            const alreadyBooked =
+                              activeChildIdForAction !== null &&
+                              data.bookings.some(
+                                (b) =>
+                                  b.lesson_id === targetLesson.id &&
+                                  b.child_id === activeChildIdForAction &&
+                                  b.status === 'booked'
+                              );
+                            const alreadyWaiting =
+                              activeChildIdForAction !== null &&
+                              data.waitlist.some(
+                                (w) =>
+                                  w.lesson_id === targetLesson.id &&
+                                  w.child_id === activeChildIdForAction
+                              );
+
+                            return (
+                              <div
+                                key={group.key}
+                                className="flex flex-col justify-between rounded-2xl border border-[#E5E7EB] bg-white p-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] sm:p-5"
                               >
-                                {busyKey === `book-${lesson.id}`
-                                  ? 'Запись...'
-                                  : data.total_remaining_lessons === 0
-                                    ? `Записать и оплатить (${activeChild?.name ?? ''})`
-                                    : `Записать (${activeChild?.name ?? ''})`}
-                              </button>
-                            </div>
-                          )}
+                                <div>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                      <div className="text-xs font-medium text-[#C86D2D]">
+                                        Групповое занятие · {group.durationMinutes} мин · {formatMoney(group.singlePrice)}
+                                      </div>
+                                      <h4 className="mt-0.5 font-display text-base font-bold text-[#111827]">
+                                        {group.weekdayLabel} · {group.timeRange}
+                                      </h4>
+                                    </div>
+                                    <span
+                                      className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                                        isFull
+                                          ? 'bg-[#FEF2F2] text-[#991B1B]'
+                                          : targetLesson.free_spots === 1
+                                            ? 'bg-[#FFFBEB] text-[#92400E]'
+                                            : 'bg-[#ECFDF5] text-[#065F46]'
+                                      }`}
+                                    >
+                                      {isFull
+                                        ? 'Мест нет'
+                                        : `${targetLesson.free_spots} из ${targetLesson.capacity}`}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-2.5 flex items-center justify-between gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-xs sm:mt-3">
+                                    <span className="text-[#6B7280]">Ближайшее:</span>
+                                    <span className="font-semibold text-[#111827] tabular-nums">
+                                      {formatLongDateRu(targetLesson.start_time)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 space-y-2 sm:mt-4">
+                                  <div className="flex flex-wrap gap-2">
+                                    {alreadyBooked ? (
+                                      <span className="inline-flex min-h-[38px] flex-1 items-center justify-center gap-1 rounded-xl bg-[#ECFDF5] px-3 text-xs font-semibold text-[#065F46] sm:min-h-[42px]">
+                                        <Check className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                        Записан(а) ({formatShortDateRu(targetLesson.start_time)})
+                                      </span>
+                                    ) : alreadyWaiting ? (
+                                      <span className="inline-flex min-h-[38px] flex-1 items-center justify-center rounded-xl bg-[#FFFBEB] px-3 text-xs font-semibold text-[#92400E] sm:min-h-[42px]">
+                                        В листе ожидания
+                                      </span>
+                                    ) : isFull ? (
+                                      <button
+                                        type="button"
+                                        disabled={busyKey === `wait-${targetLesson.id}`}
+                                        onClick={() => void handleJoinWaitlist(targetLesson.id)}
+                                        className="min-h-[38px] flex-1 cursor-pointer rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-xs font-semibold text-[#111827] hover:bg-[#F3F4F6] disabled:opacity-60 sm:min-h-[42px]"
+                                      >
+                                        {busyKey === `wait-${targetLesson.id}`
+                                          ? 'Добавление...'
+                                          : 'Встать в лист ожидания'}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={busyKey === `book-${targetLesson.id}`}
+                                        onClick={() =>
+                                          void handleBookLesson(
+                                            targetLesson.id,
+                                            data.total_remaining_lessons === 0
+                                          )
+                                        }
+                                        className="min-h-[38px] flex-1 cursor-pointer rounded-xl bg-[#C86D2D] px-3 text-xs font-semibold text-white shadow-sm hover:bg-[#B05B20] disabled:opacity-60 sm:min-h-[42px]"
+                                      >
+                                        {busyKey === `book-${targetLesson.id}`
+                                          ? 'Запись...'
+                                          : data.total_remaining_lessons === 0
+                                            ? 'Записать и оплатить'
+                                            : 'Записаться на ближайшее'}
+                                      </button>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedGroupKey((prev) =>
+                                          prev === group.key ? null : group.key
+                                        )
+                                      }
+                                      className="inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-1 rounded-xl border border-[#E5E7EB] bg-white px-3 text-xs font-semibold text-[#111827] hover:bg-[#F9FAFB] sm:min-h-[42px]"
+                                    >
+                                      <span>Выбрать дату ({group.dates.length})</span>
+                                      <ChevronDown
+                                        className={`h-3.5 w-3.5 transition-transform ${
+                                          isExpanded ? 'rotate-180' : ''
+                                        }`}
+                                        strokeWidth={1.75}
+                                      />
+                                    </button>
+                                  </div>
+
+                                  {isExpanded && (
+                                    <div className="space-y-1.5 border-t border-[#F3F4F6] pt-2">
+                                      {group.dates.map((dateLesson) => {
+                                        const dBooked =
+                                          activeChildIdForAction !== null &&
+                                          data.bookings.some(
+                                            (b) =>
+                                              b.lesson_id === dateLesson.id &&
+                                              b.child_id === activeChildIdForAction &&
+                                              b.status === 'booked'
+                                          );
+                                        const dWait =
+                                          activeChildIdForAction !== null &&
+                                          data.waitlist.some(
+                                            (w) =>
+                                              w.lesson_id === dateLesson.id &&
+                                              w.child_id === activeChildIdForAction
+                                          );
+                                        const dFull = dateLesson.free_spots === 0;
+
+                                        return (
+                                          <div
+                                            key={dateLesson.id}
+                                            className="flex items-center justify-between gap-2 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2"
+                                          >
+                                            <div className="min-w-0">
+                                              <div className="text-xs font-semibold text-[#111827] tabular-nums">
+                                                {formatLongDateRu(dateLesson.start_time)}
+                                              </div>
+                                              <div className="text-[11px] text-[#6B7280] tabular-nums">
+                                                {dFull
+                                                  ? 'Мест нет'
+                                                  : `Свободно ${dateLesson.free_spots} из ${dateLesson.capacity}`}
+                                              </div>
+                                            </div>
+
+                                            {dBooked ? (
+                                              <span className="rounded-lg bg-[#ECFDF5] px-2.5 py-1 text-[11px] font-semibold text-[#065F46]">
+                                                Записан ✓
+                                              </span>
+                                            ) : dWait ? (
+                                              <span className="rounded-lg bg-[#FFFBEB] px-2.5 py-1 text-[11px] font-semibold text-[#92400E]">
+                                                В ожидании
+                                              </span>
+                                            ) : dFull ? (
+                                              <button
+                                                type="button"
+                                                disabled={busyKey === `wait-${dateLesson.id}`}
+                                                onClick={() => void handleJoinWaitlist(dateLesson.id)}
+                                                className="min-h-[34px] shrink-0 cursor-pointer rounded-lg border border-[#E5E7EB] bg-white px-2.5 text-xs font-semibold text-[#111827]"
+                                              >
+                                                Ожидание
+                                              </button>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                disabled={busyKey === `book-${dateLesson.id}`}
+                                                onClick={() =>
+                                                  void handleBookLesson(
+                                                    dateLesson.id,
+                                                    data.total_remaining_lessons === 0
+                                                  )
+                                                }
+                                                className="min-h-[34px] shrink-0 cursor-pointer rounded-lg bg-[#C86D2D] px-2.5 text-xs font-semibold text-white hover:bg-[#B05B20]"
+                                              >
+                                                Записать
+                                              </button>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
-                  })}
+                  })()}
+
+                  {/* Other formats (masterclasses / individual / birthday) */}
+                  {(() => {
+                    const otherLessons = data.schedule.filter((l) => l.lesson_type !== 'group');
+                    if (otherLessons.length === 0) return null;
+                    return (
+                      <div>
+                        <h3 className="mb-3 font-display text-base font-bold text-[#111827]">
+                          Мастер-классы и другие форматы
+                        </h3>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          {otherLessons.map((lesson) => {
+                            const alreadyBooked =
+                              activeChildIdForAction !== null &&
+                              data.bookings.some(
+                                (b) =>
+                                  b.lesson_id === lesson.id &&
+                                  b.child_id === activeChildIdForAction &&
+                                  b.status === 'booked'
+                              );
+                            const alreadyWaiting =
+                              activeChildIdForAction !== null &&
+                              data.waitlist.some(
+                                (w) =>
+                                  w.lesson_id === lesson.id &&
+                                  w.child_id === activeChildIdForAction
+                              );
+                            const isFull = lesson.free_spots === 0;
+
+                            return (
+                              <div
+                                key={lesson.id}
+                                className="flex flex-col justify-between rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-medium text-[#6B7280] tabular-nums">
+                                      {lessonTypeLabel(lesson.lesson_type)} · {lesson.duration_minutes} мин
+                                    </span>
+                                    <span
+                                      className={`rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums ${
+                                        isFull
+                                          ? 'bg-[#FEF2F2] text-[#991B1B]'
+                                          : lesson.free_spots === 1
+                                            ? 'bg-[#FFFBEB] text-[#92400E]'
+                                            : 'bg-[#ECFDF5] text-[#065F46]'
+                                      }`}
+                                    >
+                                      {isFull
+                                        ? 'Мест нет'
+                                        : `Мест: ${lesson.free_spots} из ${lesson.capacity}`}
+                                    </span>
+                                  </div>
+
+                                  <h4 className="mt-2.5 font-display text-lg font-semibold text-[#111827]">
+                                    {lesson.title}
+                                  </h4>
+                                  {lesson.description && (
+                                    <p className="mt-1 text-sm text-[#6B7280]">
+                                      {lesson.description}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#F3F4F6] pt-4">
+                                  <div>
+                                    <div className="text-sm font-semibold text-[#111827] tabular-nums">
+                                      {formatDateTimeRu(lesson.start_time)}
+                                    </div>
+                                    <div className="text-xs text-[#6B7280] tabular-nums">
+                                      {formatMoney(lesson.single_price)} или 1 зан. с абонемента
+                                    </div>
+                                  </div>
+
+                                  {alreadyBooked ? (
+                                    <span className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#ECFDF5] px-4 text-sm font-semibold text-[#065F46]">
+                                      <Check className="h-4 w-4" strokeWidth={1.5} />
+                                      Записан(а)
+                                    </span>
+                                  ) : alreadyWaiting ? (
+                                    <span className="inline-flex min-h-[44px] items-center rounded-xl bg-[#FFFBEB] px-4 text-sm font-medium text-[#92400E]">
+                                      В листе ожидания
+                                    </span>
+                                  ) : isFull ? (
+                                    <button
+                                      type="button"
+                                      disabled={busyKey === `wait-${lesson.id}`}
+                                      onClick={() => void handleJoinWaitlist(lesson.id)}
+                                      className="min-h-[44px] cursor-pointer rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] px-4 text-sm font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] disabled:opacity-60"
+                                    >
+                                      {busyKey === `wait-${lesson.id}`
+                                        ? 'Добавление...'
+                                        : 'Встать в лист ожидания'}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={busyKey === `book-${lesson.id}`}
+                                      onClick={() =>
+                                        void handleBookLesson(
+                                          lesson.id,
+                                          data.total_remaining_lessons === 0
+                                        )
+                                      }
+                                      className="min-h-[44px] cursor-pointer rounded-xl bg-[#C86D2D] px-4 text-sm font-medium text-white shadow-sm transition-all duration-150 hover:bg-[#B05B20] active:scale-[0.98] disabled:opacity-60"
+                                    >
+                                      {busyKey === `book-${lesson.id}`
+                                        ? 'Запись...'
+                                        : data.total_remaining_lessons === 0
+                                          ? `Записать и оплатить (${activeChild?.name ?? ''})`
+                                          : `Записать (${activeChild?.name ?? ''})`}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#6B7280]">
+                    <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#C86D2D]" strokeWidth={1.75} />
+                    <span>Документы мастерской:</span>
+                    <button
+                      type="button"
+                      onClick={() => openLegalDocByKey('offer')}
+                      className="cursor-pointer font-medium text-[#111827] underline decoration-[#D1D5DB] underline-offset-2 hover:text-[#C86D2D]"
+                    >
+                      Публичная оферта
+                    </button>
+                    <span>·</span>
+                    <button
+                      type="button"
+                      onClick={() => openLegalDocByKey('privacy')}
+                      className="cursor-pointer font-medium text-[#111827] underline decoration-[#D1D5DB] underline-offset-2 hover:text-[#C86D2D]"
+                    >
+                      Политика конфиденциальности
+                    </button>
+                    <span>·</span>
+                    <button
+                      type="button"
+                      onClick={() => openLegalDocByKey('personal_data')}
+                      className="cursor-pointer font-medium text-[#111827] underline decoration-[#D1D5DB] underline-offset-2 hover:text-[#C86D2D]"
+                    >
+                      Согласие на обработку ПД
+                    </button>
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -1607,7 +1973,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                             )}
                           </div>
                           <div className="mt-1 text-xs text-[#6B7280] tabular-nums">
-                            {pluralizeLessons(tariff.lessons_count)} · срок {tariff.validity_days} дн.
+                            {pluralizeLessons(tariff.lessons_count)}
                           </div>
                         </div>
                         <div className="mt-3 font-display text-2xl font-bold text-[#111827] tabular-nums">
@@ -1617,6 +1983,9 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
                     );
                   })}
                 </div>
+                <p className="mt-2.5 text-xs text-[#6B7280]">
+                  Срок действия абонементов согласовывается с мастером.
+                </p>
 
                 {/* Mandatory Legal Checkboxes Gate */}
                 <div className="mt-5 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
@@ -2163,77 +2532,7 @@ export const ParentCabinetPage: React.FC<ParentCabinetPageProps> = ({
         </div>
       )}
       {/* Legal Document Viewer Modal */}
-      {previewLegalDoc && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label={previewLegalDoc.title}
-        >
-          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-xl">
-            <div className="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-5 py-3.5">
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-[#6B7280]">Документ мастерской «Ясна»</div>
-                <div className="truncate font-display text-sm font-semibold text-[#111827]">
-                  {previewLegalDoc.title}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <a
-                  href={`/api/public/legal/${previewLegalDoc.doc_key}/file`}
-                  download={previewLegalDoc.original_name || `${previewLegalDoc.doc_key}.txt`}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#C86D2D] px-3 text-xs font-medium text-white hover:bg-[#B05B20]"
-                >
-                  <Download className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  Скачать
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setPreviewLegalDoc(null)}
-                  aria-label="Закрыть документ"
-                  className="inline-flex min-h-[40px] min-w-[40px] cursor-pointer items-center justify-center rounded-xl border border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#111827]"
-                >
-                  <X className="h-4 w-4" strokeWidth={1.5} />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto bg-[#F9FAFB] p-5">
-              {previewLegalDoc.has_file === 1 &&
-              previewLegalDoc.mime_type === 'application/pdf' ? (
-                <iframe
-                  src={`/api/public/legal/${previewLegalDoc.doc_key}/file?inline=1`}
-                  title={previewLegalDoc.title}
-                  className="h-[68vh] w-full rounded-xl border border-[#E5E7EB] bg-white"
-                />
-              ) : previewLegalDoc.has_file === 1 &&
-                previewLegalDoc.mime_type?.startsWith('image/') ? (
-                <div className="flex items-center justify-center">
-                  <img
-                    src={`/api/public/legal/${previewLegalDoc.doc_key}/file?inline=1`}
-                    alt={previewLegalDoc.title}
-                    className="max-h-[70vh] w-auto rounded-xl border border-[#E5E7EB] bg-white object-contain shadow-sm"
-                  />
-                </div>
-              ) : previewLegalDoc.has_file === 1 &&
-                previewLegalDoc.mime_type !== 'text/plain' ? (
-                <div className="rounded-xl border border-[#E5E7EB] bg-white p-6 text-center text-sm text-[#374151]">
-                  <p>
-                    Загружен файл: <strong>{previewLegalDoc.original_name}</strong>.
-                  </p>
-                  <p className="mt-1 text-xs text-[#6B7280]">
-                    Нажмите «Скачать» выше, чтобы открыть файл на вашем устройстве.
-                  </p>
-                </div>
-              ) : (
-                <div className="whitespace-pre-wrap rounded-xl border border-[#E5E7EB] bg-white p-5 text-sm leading-relaxed text-[#111827]">
-                  {previewLegalDoc.content_text}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <LegalDocumentModal doc={previewLegalDoc} onClose={() => setPreviewLegalDoc(null)} />
     </div>
   );
 };

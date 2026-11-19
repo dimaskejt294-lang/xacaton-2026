@@ -81,6 +81,16 @@ export default function App() {
     }
   }, []);
 
+  const handleTokenInvalid = useCallback(() => {
+    setSavedFamilyToken(null);
+    try {
+      localStorage.removeItem(STORAGE_KEY_FAMILY_TOKEN);
+      sessionStorage.removeItem(STORAGE_KEY_FAMILY_TOKEN);
+    } catch (err) {
+      console.warn('[App] Не удалось очистить токен семьи из storage:', err);
+    }
+  }, []);
+
   const handleToggleTheme = useCallback(() => {
     setTheme((prev) => {
       const next: ThemeMode = prev === 'dark' ? 'light' : 'dark';
@@ -93,7 +103,7 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="flex min-h-screen flex-col bg-[#F5F6F8] text-[#111827] transition-colors duration-200">
+      <div className="flex min-h-screen flex-col overflow-x-clip bg-[#F5F6F8] text-[#111827] transition-colors duration-200">
         <TopNav
           activeView={route.view}
           onNavigate={navigate}
@@ -102,11 +112,13 @@ export default function App() {
           onToggleTheme={handleToggleTheme}
         />
 
-        <main className="flex-1">
+        <main className="min-w-0 flex-1">
           {route.view === 'schedule' && (
             <PublicSchedulePage
               onNavigate={navigate}
               savedFamilyToken={savedFamilyToken}
+              onTokenValid={handleTokenValid}
+              onTokenInvalid={handleTokenInvalid}
             />
           )}
 

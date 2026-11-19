@@ -430,14 +430,16 @@ masterRouter.get('/dashboard', (_req, res, next) => {
       .all();
 
     const tariffs = db
-      .prepare('SELECT id, title, lessons_count, price, validity_days, is_active FROM tariffs ORDER BY lessons_count ASC')
+      .prepare(
+        'SELECT id, title, lessons_count, price, validity_days, is_active FROM tariffs ORDER BY lessons_count ASC, price ASC'
+      )
       .all();
 
     const settings = db
       .prepare(
         `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
                 show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
-                show_hero_groups, hero_groups_text, show_hero_free_cancel
+                show_hero_groups, hero_groups_text, show_hero_free_cancel, default_group_capacity
          FROM workshop_settings WHERE id = 1`
       )
       .get();
@@ -503,12 +505,18 @@ function normalizeLessonType(raw: unknown): 'group' | 'masterclass' | 'individua
 
 masterRouter.post('/lessons', (req, res, next) => {
   try {
+    const db = getDb();
+    const settingsRow = db
+      .prepare('SELECT default_group_capacity FROM workshop_settings WHERE id = 1')
+      .get() as { default_group_capacity?: number } | undefined;
+    const defaultCap = settingsRow?.default_group_capacity ?? 4;
+
     const title = sanitizePlainText(req.body?.title, 140);
     const lessonType = normalizeLessonType(req.body?.lesson_type);
     const startTimeRaw = String(req.body?.start_time ?? '').trim();
     const durationMinutes = Number(req.body?.duration_minutes ?? 120);
-    const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : 4));
-    const singlePrice = Number(req.body?.single_price ?? 1200);
+    const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : defaultCap));
+    const singlePrice = Number(req.body?.single_price ?? 1600);
     const description = sanitizePlainText(req.body?.description, 1000) || null;
 
     if (!title || !startTimeRaw) {
@@ -528,7 +536,6 @@ masterRouter.post('/lessons', (req, res, next) => {
       throw new HttpError(400, 'Цена занятия должна быть от 0 до 1 000 000 ₽');
     }
 
-    const db = getDb();
     const resDb = db
       .prepare(
         `INSERT INTO lessons (title, lesson_type, start_time, duration_minutes, capacity, single_price, description, is_canceled)
@@ -559,7 +566,7 @@ masterRouter.patch('/lessons/:lessonId', (req, res, next) => {
     const startTimeRaw = String(req.body?.start_time ?? '').trim();
     const durationMinutes = Number(req.body?.duration_minutes ?? 120);
     const capacity = Number(req.body?.capacity ?? (lessonType === 'individual' ? 1 : 4));
-    const singlePrice = Number(req.body?.single_price ?? 1200);
+    const singlePrice = Number(req.body?.single_price ?? 1600);
     const description = sanitizePlainText(req.body?.description, 1000) || null;
 
     if (!title || !startTimeRaw) {
@@ -662,6 +669,86 @@ masterRouter.patch('/lessons/:lessonId/cancel', (req, res, next) => {
     });
 
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+masterRouter.post('/lessons/cancel-date', (req, res, next) => {
+  try {
+    const dateStr = String(req.body?.date ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      throw new HttpError(400, 'Укажите дату в формате ГГГГ-ММ-ДД');
+    }
+
+    const startCandidate = new Date(`${dateStr}T00:00:00+05:00`);
+    const endCandidate = new Date(`${dateStr}T23:59:59.999+05:00`);
+    if (Number.isNaN(startCandidate.getTime()) || Number.isNaN(endCandidate.getTime())) {
+      throw new HttpError(400, 'Некорректная дата');
+    }
+
+    const startRangeIso = startCandidate.toISOString();
+    const endRangeIso = endCandidate.toISOString();
+
+    const summary = runInTransaction((db) => {
+      const lessonsToCancel = db
+        .prepare(
+          `SELECT id, title, start_time
+           FROM lessons
+           WHERE is_canceled = 0 AND start_time >= ? AND start_time <= ?
+           ORDER BY start_time ASC`
+        )
+        .all(startRangeIso, endRangeIso) as Array<{ id: number; title: string; start_time: string }>;
+
+      if (lessonsToCancel.length === 0) {
+        throw new HttpError(404, 'На выбранную дату нет активных занятий для отмены');
+      }
+
+      const nowIso = new Date().toISOString();
+      let canceledBookingsCount = 0;
+
+      for (const lesson of lessonsToCancel) {
+        db.prepare('UPDATE lessons SET is_canceled = 1 WHERE id = ?').run(lesson.id);
+
+        const affectedBookings = db
+          .prepare(
+            `SELECT b.id, c.family_id, c.name AS child_name
+             FROM bookings b
+             JOIN children c ON c.id = b.child_id
+             WHERE b.lesson_id = ? AND b.status = 'booked'`
+          )
+          .all(lesson.id) as Array<{ id: number; family_id: number; child_name: string }>;
+
+        for (const b of affectedBookings) {
+          db.prepare("UPDATE bookings SET status = 'canceled', updated_at = ? WHERE id = ?").run(
+            nowIso,
+            b.id
+          );
+          db.prepare(
+            `INSERT INTO attendance_logs (booking_id, old_status, new_status, reason, changed_at)
+             VALUES (?, 'booked', 'canceled', 'Дата отменена мастером', ?)`
+          ).run(b.id, nowIso);
+          createNotification(
+            b.family_id,
+            'Занятие отменено мастерской',
+            `Занятие «${lesson.title}» (${dateStr}) отменено мастером. Запись ученика (${b.child_name}) снята без списания.`,
+            db
+          );
+          canceledBookingsCount += 1;
+        }
+      }
+
+      return {
+        canceledCount: lessonsToCancel.length,
+        canceledBookingsCount,
+      };
+    });
+
+    res.json({
+      ok: true,
+      canceled_count: summary.canceledCount,
+      canceled_bookings_count: summary.canceledBookingsCount,
+    });
   } catch (err) {
     next(err);
   }
@@ -944,7 +1031,7 @@ masterRouter.post('/families/:familyId/subscriptions', (req, res, next) => {
       createNotification(
         familyId,
         'Начислен абонемент',
-        `Мастер добавил вам абонемент «${title}» (+${lessonsCount} зан., действует ${validityDays} дн.).`,
+        `Мастер добавил вам абонемент «${title}» (+${lessonsCount} зан.).`,
         db
       );
 
@@ -986,6 +1073,46 @@ masterRouter.post('/tariffs', (req, res, next) => {
       .run(title, lessonsCount, price, validityDays);
 
     res.status(201).json({ ok: true, tariff_id: Number(resDb.lastInsertRowid) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+masterRouter.patch('/tariffs/:tariffId', (req, res, next) => {
+  try {
+    const tariffId = parsePositiveIntId(req.params.tariffId, 'Некорректный ID тарифа');
+    const title = sanitizePlainText(req.body?.title, 120);
+    const lessonsCount = Number(req.body?.lessons_count);
+    const price = Number(req.body?.price);
+    const validityDays = Number(req.body?.validity_days ?? 45);
+
+    if (!title) {
+      throw new HttpError(400, 'Укажите название тарифа');
+    }
+    if (!Number.isInteger(lessonsCount) || lessonsCount < 1 || lessonsCount > 1000) {
+      throw new HttpError(400, 'Количество занятий должно быть от 1 до 1000');
+    }
+    if (!Number.isFinite(price) || price <= 0 || price > 1_000_000) {
+      throw new HttpError(400, 'Стоимость должна быть больше 0 и не выше 1 000 000 ₽');
+    }
+    if (!Number.isInteger(validityDays) || validityDays < 1 || validityDays > 3650) {
+      throw new HttpError(400, 'Срок действия должен быть от 1 до 3650 дней');
+    }
+
+    const db = getDb();
+    const resDb = db
+      .prepare(
+        `UPDATE tariffs
+         SET title = ?, lessons_count = ?, price = ?, validity_days = ?
+         WHERE id = ?`
+      )
+      .run(title, lessonsCount, price, validityDays, tariffId);
+
+    if (resDb.changes === 0) {
+      throw new HttpError(404, 'Тариф не найден');
+    }
+
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -1090,7 +1217,7 @@ masterRouter.put('/settings', (req, res, next) => {
       .prepare(
         `SELECT free_cancel_hours, charge_on_miss, charge_on_late_cancel,
                 show_hero_age, hero_age_text, show_hero_duration, hero_duration_text,
-                show_hero_groups, hero_groups_text, show_hero_free_cancel
+                show_hero_groups, hero_groups_text, show_hero_free_cancel, default_group_capacity
          FROM workshop_settings WHERE id = 1`
       )
       .get() as
@@ -1105,6 +1232,7 @@ masterRouter.put('/settings', (req, res, next) => {
           show_hero_groups: number;
           hero_groups_text: string;
           show_hero_free_cancel: number;
+          default_group_capacity: number;
         }
       | undefined;
 
@@ -1114,6 +1242,18 @@ masterRouter.put('/settings', (req, res, next) => {
 
     if (!Number.isInteger(freeCancelHours) || freeCancelHours < 0 || freeCancelHours > 168) {
       throw new HttpError(400, 'Срок бесплатной отмены должен быть от 0 до 168 часов');
+    }
+
+    const defaultGroupCapacity =
+      req.body?.default_group_capacity !== undefined
+        ? Number(req.body.default_group_capacity)
+        : (existing?.default_group_capacity ?? 4);
+    if (
+      !Number.isInteger(defaultGroupCapacity) ||
+      defaultGroupCapacity < 1 ||
+      defaultGroupCapacity > 100
+    ) {
+      throw new HttpError(400, 'Вместимость группы по умолчанию должна быть от 1 до 100 мест');
     }
 
     const toFlag = (val: unknown, fallback: number): number => {
@@ -1135,7 +1275,7 @@ masterRouter.put('/settings', (req, res, next) => {
     const showHeroAge = toFlag(req.body?.show_hero_age, existing?.show_hero_age ?? 1);
     const heroAgeText = sanitizeText(
       req.body?.hero_age_text,
-      existing?.hero_age_text ?? '6–14 лет',
+      existing?.hero_age_text ?? 'От 6 лет',
       'Возраст'
     );
     const showHeroDuration = toFlag(req.body?.show_hero_duration, existing?.show_hero_duration ?? 1);
@@ -1147,36 +1287,58 @@ masterRouter.put('/settings', (req, res, next) => {
     const showHeroGroups = toFlag(req.body?.show_hero_groups, existing?.show_hero_groups ?? 1);
     const heroGroupsText = sanitizeText(
       req.body?.hero_groups_text,
-      existing?.hero_groups_text ?? '2–4 места',
+      existing?.hero_groups_text ?? 'до 4 мест',
       'Группы'
     );
     const showHeroFreeCancel = toFlag(
       req.body?.show_hero_free_cancel,
-      existing?.show_hero_free_cancel ?? 1
+      existing?.show_hero_free_cancel ?? 0
     );
 
-    db.prepare(
-      `UPDATE workshop_settings
-       SET free_cancel_hours = ?, charge_on_miss = ?, charge_on_late_cancel = ?,
-           show_hero_age = ?, hero_age_text = ?,
-           show_hero_duration = ?, hero_duration_text = ?,
-           show_hero_groups = ?, hero_groups_text = ?,
-           show_hero_free_cancel = ?
-       WHERE id = 1`
-    ).run(
-      freeCancelHours,
-      chargeOnMiss,
-      chargeOnLateCancel,
-      showHeroAge,
-      heroAgeText,
-      showHeroDuration,
-      heroDurationText,
-      showHeroGroups,
-      heroGroupsText,
-      showHeroFreeCancel
-    );
+    let updatedLessonsCount = 0;
+    runInTransaction((tx) => {
+      tx.prepare(
+        `UPDATE workshop_settings
+         SET free_cancel_hours = ?, charge_on_miss = ?, charge_on_late_cancel = ?,
+             show_hero_age = ?, hero_age_text = ?,
+             show_hero_duration = ?, hero_duration_text = ?,
+             show_hero_groups = ?, hero_groups_text = ?,
+             show_hero_free_cancel = ?, default_group_capacity = ?
+         WHERE id = 1`
+      ).run(
+        freeCancelHours,
+        chargeOnMiss,
+        chargeOnLateCancel,
+        showHeroAge,
+        heroAgeText,
+        showHeroDuration,
+        heroDurationText,
+        showHeroGroups,
+        heroGroupsText,
+        showHeroFreeCancel,
+        defaultGroupCapacity
+      );
 
-    res.json({ ok: true });
+      if (req.body?.apply_capacity_to_upcoming_groups === true) {
+        const resUpd = tx
+          .prepare(
+            `UPDATE lessons
+             SET capacity = ?
+             WHERE lesson_type = 'group'
+               AND is_canceled = 0
+               AND start_time >= datetime('now', '-2 hours')
+               AND (
+                 SELECT COUNT(*)
+                 FROM bookings b
+                 WHERE b.lesson_id = lessons.id AND b.status IN ('booked', 'attended')
+               ) <= ?`
+          )
+          .run(defaultGroupCapacity, defaultGroupCapacity);
+        updatedLessonsCount = Number(resUpd.changes ?? 0);
+      }
+    });
+
+    res.json({ ok: true, updated_lessons_count: updatedLessonsCount });
   } catch (err) {
     next(err);
   }

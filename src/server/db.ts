@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from './config.ts';
+import { syncOfficialLegalDocsIfUntouched } from './services/legalService.ts';
 
 let dbInstance: DatabaseSync | null = null;
 
@@ -40,6 +41,7 @@ function initializeSchema(db: DatabaseSync): void {
       max_contact TEXT NOT NULL DEFAULT '',
       access_token TEXT NOT NULL UNIQUE,
       money_balance REAL NOT NULL DEFAULT 0.0,
+      consented_at TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -172,12 +174,13 @@ function initializeSchema(db: DatabaseSync): void {
       charge_on_late_cancel INTEGER NOT NULL DEFAULT 1,
       master_password_hash TEXT NOT NULL,
       show_hero_age INTEGER NOT NULL DEFAULT 1,
-      hero_age_text TEXT NOT NULL DEFAULT '6–14 лет',
+      hero_age_text TEXT NOT NULL DEFAULT 'От 6 лет',
       show_hero_duration INTEGER NOT NULL DEFAULT 1,
       hero_duration_text TEXT NOT NULL DEFAULT '2 часа',
       show_hero_groups INTEGER NOT NULL DEFAULT 1,
-      hero_groups_text TEXT NOT NULL DEFAULT '2–4 места',
-      show_hero_free_cancel INTEGER NOT NULL DEFAULT 1
+      hero_groups_text TEXT NOT NULL DEFAULT 'до 4 мест',
+      show_hero_free_cancel INTEGER NOT NULL DEFAULT 0,
+      default_group_capacity INTEGER NOT NULL DEFAULT 4 CHECK(default_group_capacity >= 1 AND default_group_capacity <= 100)
     );
 
     CREATE TABLE IF NOT EXISTS reviews (
@@ -240,12 +243,13 @@ function initializeSchema(db: DatabaseSync): void {
     }
   };
   ensureSettingsCol('show_hero_age', 'INTEGER NOT NULL DEFAULT 1');
-  ensureSettingsCol('hero_age_text', "TEXT NOT NULL DEFAULT '6–14 лет'");
+  ensureSettingsCol('hero_age_text', "TEXT NOT NULL DEFAULT 'От 6 лет'");
   ensureSettingsCol('show_hero_duration', 'INTEGER NOT NULL DEFAULT 1');
   ensureSettingsCol('hero_duration_text', "TEXT NOT NULL DEFAULT '2 часа'");
   ensureSettingsCol('show_hero_groups', 'INTEGER NOT NULL DEFAULT 1');
-  ensureSettingsCol('hero_groups_text', "TEXT NOT NULL DEFAULT '2–4 места'");
-  ensureSettingsCol('show_hero_free_cancel', 'INTEGER NOT NULL DEFAULT 1');
+  ensureSettingsCol('hero_groups_text', "TEXT NOT NULL DEFAULT 'до 4 мест'");
+  ensureSettingsCol('show_hero_free_cancel', 'INTEGER NOT NULL DEFAULT 0');
+  ensureSettingsCol('default_group_capacity', 'INTEGER NOT NULL DEFAULT 4');
 
   const familyCols = db.prepare('PRAGMA table_info(families)').all() as Array<{ name: string }>;
   if (!familyCols.some((c) => c.name === 'email')) {
@@ -253,6 +257,9 @@ function initializeSchema(db: DatabaseSync): void {
   }
   if (!familyCols.some((c) => c.name === 'max_contact')) {
     db.exec("ALTER TABLE families ADD COLUMN max_contact TEXT NOT NULL DEFAULT '';");
+  }
+  if (!familyCols.some((c) => c.name === 'consented_at')) {
+    db.exec('ALTER TABLE families ADD COLUMN consented_at TEXT;');
   }
 
   const childrenTableSql = db
@@ -305,6 +312,96 @@ function initializeSchema(db: DatabaseSync): void {
       COMMIT;
     `);
     db.exec('PRAGMA foreign_keys = ON;');
+  }
+
+  const versionRow = db.prepare('PRAGMA user_version;').get() as { user_version: number } | undefined;
+  const userVersion = versionRow?.user_version ?? 0;
+  if (userVersion < 2) {
+    // 1. Update workshop settings defaults if untouched
+    db.exec(`
+      UPDATE workshop_settings
+      SET hero_age_text = 'От 6 лет'
+      WHERE id = 1 AND hero_age_text = '6–14 лет';
+
+      UPDATE workshop_settings
+      SET hero_groups_text = 'до 4 мест'
+      WHERE id = 1 AND hero_groups_text = '2–4 места';
+
+      UPDATE workshop_settings
+      SET show_hero_free_cancel = 0
+      WHERE id = 1;
+    `);
+
+    // 2. Sync existing tariffs (only when DB already has tariffs)
+    const tariffCount = (db.prepare('SELECT COUNT(*) AS cnt FROM tariffs').get() as { cnt: number }).cnt;
+    if (tariffCount > 0) {
+      db.exec(`
+        UPDATE tariffs
+        SET price = 1600.00
+        WHERE title = 'Разовое занятие' AND lessons_count = 1 AND price = 1200.00;
+
+        UPDATE tariffs
+        SET price = 5500.00
+        WHERE title = 'Абонемент на 4 занятия' AND lessons_count = 4 AND price = 4200.00;
+
+        UPDATE tariffs
+        SET is_active = 0
+        WHERE title = 'Абонемент на 8 занятий' AND lessons_count = 8;
+      `);
+
+      const trialTariff = db
+        .prepare("SELECT id FROM tariffs WHERE title = 'Пробное занятие' LIMIT 1")
+        .get();
+      if (!trialTariff) {
+        db.prepare(
+          `INSERT INTO tariffs (title, lessons_count, price, validity_days, is_active)
+           VALUES ('Пробное занятие', 1, 1000.00, 30, 1)`
+        ).run();
+      }
+    }
+
+    // 3. Rename seeded generic craft titles on group lessons to 'Групповое занятие'
+    db.exec(`
+      UPDATE lessons
+      SET title = 'Групповое занятие',
+          description = 'Групповое занятие (2 часа). Ребята работают над своими проектами из дерева под руководством мастера. Все материалы и инструменты включены.'
+      WHERE lesson_type = 'group'
+        AND title IN (
+          'Столярное дело: полка из массива',
+          'Скворечник из кедра',
+          'Шкатулка с секретом',
+          'Подставка под телефон из дуба',
+          'Деревянный органайзер для стола',
+          'Кормушка для птиц из лиственницы'
+        );
+
+      UPDATE lessons
+      SET single_price = 1600.00
+      WHERE lesson_type = 'group' AND single_price = 1200.00;
+    `);
+
+    // 4. Remove the 3 weekend slots on 2026-11-29 (Asia/Yekaterinburg UTC+5: 2026-11-28T19:00:00Z .. 2026-11-29T19:00:00Z)
+    db.exec(`
+      DELETE FROM lessons
+      WHERE start_time >= '2026-11-28T19:00:00.000Z'
+        AND start_time < '2026-11-29T19:00:00.000Z'
+        AND id NOT IN (SELECT lesson_id FROM bookings WHERE status != 'canceled');
+
+      UPDATE lessons
+      SET is_canceled = 1
+      WHERE start_time >= '2026-11-28T19:00:00.000Z'
+        AND start_time < '2026-11-29T19:00:00.000Z';
+    `);
+
+    db.exec('PRAGMA user_version = 2;');
+  }
+
+  const versionAfter2Row = db.prepare('PRAGMA user_version;').get() as
+    | { user_version: number }
+    | undefined;
+  if ((versionAfter2Row?.user_version ?? 0) < 3) {
+    syncOfficialLegalDocsIfUntouched(db);
+    db.exec('PRAGMA user_version = 3;');
   }
 }
 
